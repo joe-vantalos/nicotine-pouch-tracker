@@ -141,8 +141,8 @@ async function loadEntries() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const rows = await res.json();
     entries = rows.map(r => ({
-      inTs: Number(r.inTs),
-      outTs: r.outTs ? Number(r.outTs) : null,
+      inTs: new Date(r.inTs).getTime(),
+      outTs: r.outTs ? new Date(r.outTs).getTime() : null,
       mg: Number(r.mg)
     })).filter(e => !isNaN(e.inTs));
     dataLoaded = true;
