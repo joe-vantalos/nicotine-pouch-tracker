@@ -137,7 +137,7 @@ async function loadEntries() {
   el.status.className = 'status';
   el.retryBtn.style.display = 'none';
   try {
-    const res = await fetch(SHEET_URL, { method: 'GET' });
+    const res = await fetch(SHEET_URL + '?t=' + Date.now(), { method: 'GET', cache: 'no-store' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const rows = await res.json();
     entries = rows.map(r => ({
