@@ -173,7 +173,7 @@ function renderStrengthRow() {
     btn.className = 'strength-btn' + (mg === selectedStrength ? ' active' : '');
     btn.textContent = mg + 'mg';
     btn.disabled = !!active;
-    btn.onclick = () => { selectedStrength = mg; renderStrengthRow(); };
+    btn.onclick = () => { selectedStrength = mg; renderAll(); };
     el.strengthRow.appendChild(btn);
   });
 }
