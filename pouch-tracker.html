@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pouch Tracker</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #111;
+    color: #eee;
+    padding: 16px;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #999; }
+  .current-status { text-align: center; padding: 20px 0 8px; }
+  .current-status .state { font-size: 28px; font-weight: 700; }
+  .current-status .detail { font-size: 13px; color: #888; margin-top: 4px; }
+  .action-btn {
+    display: block; width: 100%; padding: 18px; font-size: 18px; font-weight: 600;
+    border: none; border-radius: 10px; cursor: pointer; margin: 16px 0 10px;
+  }
+  .action-btn.insert { background: #eee; color: #111; }
+  .action-btn.remove { background: #d9534f; color: #fff; }
+  .action-btn:disabled { opacity: 0.4; }
+  .undo-btn {
+    display: block; width: 100%; padding: 10px; font-size: 14px; background: transparent;
+    color: #888; border: 1px solid #333; border-radius: 8px; cursor: pointer; margin-bottom: 20px;
+  }
+  .strength-row { display: flex; gap: 8px; margin-bottom: 4px; }
+  .strength-btn {
+    flex: 1; padding: 10px; background: #1c1c1c; border: 1px solid #333; border-radius: 8px;
+    color: #aaa; font-size: 14px; cursor: pointer;
+  }
+  .strength-btn.active { background: #eee; color: #111; border-color: #eee; font-weight: 600; }
+  .strength-btn:disabled { opacity: 0.4; }
+  .section-label {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: #666;
+    margin-bottom: 8px; margin-top: 20px;
+  }
+  .week-chart { display: flex; align-items: flex-end; gap: 8px; height: 100px; margin-bottom: 8px; }
+  .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+  .bar { width: 100%; background: #eee; border-radius: 3px 3px 0 0; min-height: 2px; }
+  .bar-num { font-size: 11px; color: #999; margin-bottom: 2px; }
+  .bar-day { font-size: 10px; color: #666; margin-top: 4px; }
+  .stats-row {
+    display: flex; justify-content: space-between; padding: 10px 0;
+    border-bottom: 1px solid #222; font-size: 14px;
+  }
+  .stats-row span:first-child { color: #999; }
+  .stats-row span:last-child { font-weight: 600; }
+  .log-entry {
+    display: flex; justify-content: space-between; padding: 8px 0;
+    border-bottom: 1px solid #1e1e1e; font-size: 13px; color: #999;
+  }
+  .log-entry .active-tag { color: #d9534f; font-weight: 600; }
+  .empty-state { text-align: center; color: #555; font-size: 13px; padding: 20px 0; }
+  .status { text-align: center; font-size: 12px; color: #555; margin-top: 16px; word-break: break-word; }
+  .status.error { color: #d9534f; }
+  .retry-btn {
+    display: block; width: 100%; padding: 10px; font-size: 14px; background: transparent;
+    color: #eee; border: 1px solid #d9534f; border-radius: 8px; cursor: pointer; margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Pouch Tracker</h1>
+
+<div class="current-status">
+  <div class="state" id="stateText">-</div>
+  <div class="detail" id="stateDetail"></div>
+</div>
+
+<div class="strength-row" id="strengthRow"></div>
+
+<button class="action-btn insert" id="actionBtn" disabled>Loading...</button>
+<button class="undo-btn" id="undoBtn">Undo last action</button>
+
+<div class="section-label">Pouches per day (last 7)</div>
+<div class="week-chart" id="weekChart"></div>
+
+<div class="section-label">Stats</div>
+<div class="stats-row"><span>Today</span><span id="statToday">0 pouches / 0 mg</span></div>
+<div class="stats-row"><span>Avg time in mouth</span><span id="statAvgDuration">-</span></div>
+<div class="stats-row"><span>This week</span><span id="statWeek">0 pouches / 0 mg</span></div>
+<div class="stats-row"><span>Daily average (7d)</span><span id="statAvg">0 pouches / 0 mg</span></div>
+
+<div class="section-label">Today's log</div>
+<div class="log-list" id="logList"></div>
+
+<div class="status" id="status">loading...</div>
+<button class="retry-btn" id="retryBtn" style="display:none">Retry loading</button>
+
+<script>
+const SHEET_URL = 'https://script.google.com/macros/s/AKfycbxA6lB0MpILO2_nP2Bppv4TUv7V939vQ1zbkdW73tYkDpLMNwS4tx--hnhPJuKGfzSXEw/exec';
+const STRENGTHS = [6, 11];
+let selectedStrength = 6;
+let entries = []; // {inTs, outTs, mg}
+let dataLoaded = false;
+
+const el = {
+  stateText: document.getElementById('stateText'),
+  stateDetail: document.getElementById('stateDetail'),
+  strengthRow: document.getElementById('strengthRow'),
+  actionBtn: document.getElementById('actionBtn'),
+  undoBtn: document.getElementById('undoBtn'),
+  weekChart: document.getElementById('weekChart'),
+  statToday: document.getElementById('statToday'),
+  statAvgDuration: document.getElementById('statAvgDuration'),
+  statWeek: document.getElementById('statWeek'),
+  statAvg: document.getElementById('statAvg'),
+  logList: document.getElementById('logList'),
+  status: document.getElementById('status'),
+  retryBtn: document.getElementById('retryBtn'),
+};
+
+function dayKey(ts) {
+  const d = new Date(ts);
+  return d.getFullYear() + '-' + (d.getMonth()+1).toString().padStart(2,'0') + '-' + d.getDate().toString().padStart(2,'0');
+}
+function todayKey() { return dayKey(Date.now()); }
+function fmtTime(ts) { return new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); }
+function fmtDuration(ms) {
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return mins + 'm';
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h + 'h ' + m + 'm';
+}
+function getActiveEntry() { return entries.find(e => e.outTs === null) || null; }
+
+async function loadEntries() {
+  el.status.textContent = 'loading from sheet...';
+  el.status.className = 'status';
+  el.retryBtn.style.display = 'none';
+  try {
+    const res = await fetch(SHEET_URL, { method: 'GET' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    entries = rows.map(r => ({
+      inTs: Number(r.inTs),
+      outTs: r.outTs ? Number(r.outTs) : null,
+      mg: Number(r.mg)
+    })).filter(e => !isNaN(e.inTs));
+    dataLoaded = true;
+    el.status.textContent = 'ready';
+  } catch (e) {
+    el.status.textContent = 'load failed: ' + (e && e.message ? e.message : String(e));
+    el.status.className = 'status error';
+    el.retryBtn.style.display = 'block';
+    dataLoaded = false;
+  }
+}
+
+async function postAction(body) {
+  const res = await fetch(SHEET_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+
+function renderStrengthRow() {
+  const active = getActiveEntry();
+  el.strengthRow.innerHTML = '';
+  STRENGTHS.forEach(mg => {
+    const btn = document.createElement('button');
+    btn.className = 'strength-btn' + (mg === selectedStrength ? ' active' : '');
+    btn.textContent = mg + 'mg';
+    btn.disabled = !!active;
+    btn.onclick = () => { selectedStrength = mg; renderStrengthRow(); };
+    el.strengthRow.appendChild(btn);
+  });
+}
+
+function renderStatus() {
+  const active = getActiveEntry();
+  if (active) {
+    el.stateText.textContent = 'IN';
+    el.stateDetail.textContent = active.mg + 'mg, in for ' + fmtDuration(Date.now() - active.inTs);
+    el.actionBtn.textContent = 'Remove Pouch';
+    el.actionBtn.className = 'action-btn remove';
+  } else {
+    el.stateText.textContent = 'NONE';
+    el.stateDetail.textContent = 'no pouch in';
+    el.actionBtn.textContent = 'Insert Pouch (' + selectedStrength + 'mg)';
+    el.actionBtn.className = 'action-btn insert';
+  }
+  el.actionBtn.disabled = !dataLoaded;
+}
+
+function renderAll() {
+  renderStatus();
+  renderStrengthRow();
+
+  const today = todayKey();
+  const todayEntries = entries.filter(e => dayKey(e.inTs) === today);
+  const todayMg = todayEntries.reduce((s,e) => s + e.mg, 0);
+  el.statToday.textContent = todayEntries.length + ' pouches / ' + todayMg + ' mg';
+
+  const completedToday = todayEntries.filter(e => e.outTs !== null);
+  if (completedToday.length > 0) {
+    const avgMs = completedToday.reduce((s,e) => s + (e.outTs - e.inTs), 0) / completedToday.length;
+    el.statAvgDuration.textContent = fmtDuration(avgMs);
+  } else {
+    el.statAvgDuration.textContent = '-';
+  }
+
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push({ key: dayKey(d.getTime()), label: d.toLocaleDateString('en-GB', { weekday: 'short' })[0] });
+  }
+  const counts = days.map(d => entries.filter(e => dayKey(e.inTs) === d.key).length);
+  const maxCount = Math.max(...counts, 1);
+
+  el.weekChart.innerHTML = '';
+  days.forEach((d, i) => {
+    const col = document.createElement('div');
+    col.className = 'bar-col';
+    const num = document.createElement('div');
+    num.className = 'bar-num';
+    num.textContent = counts[i];
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    bar.style.height = Math.max((counts[i] / maxCount) * 80, counts[i] > 0 ? 4 : 2) + 'px';
+    const label = document.createElement('div');
+    label.className = 'bar-day';
+    label.textContent = d.label;
+    col.appendChild(num); col.appendChild(bar); col.appendChild(label);
+    el.weekChart.appendChild(col);
+  });
+
+  const weekEntries = entries.filter(e => days.some(d => d.key === dayKey(e.inTs)));
+  const weekMg = weekEntries.reduce((s,e) => s + e.mg, 0);
+  el.statWeek.textContent = weekEntries.length + ' pouches / ' + weekMg + ' mg';
+  el.statAvg.textContent = (weekEntries.length / 7).toFixed(1) + ' pouches / ' + Math.round(weekMg / 7) + ' mg';
+
+  el.logList.innerHTML = '';
+  if (todayEntries.length === 0) {
+    el.logList.innerHTML = '<div class="empty-state">nothing logged today</div>';
+  } else {
+    todayEntries.slice().reverse().forEach(e => {
+      const row = document.createElement('div');
+      row.className = 'log-entry';
+      const inStr = fmtTime(e.inTs);
+      const outStr = e.outTs ? fmtTime(e.outTs) + ' (' + fmtDuration(e.outTs - e.inTs) + ')' : '<span class="active-tag">still in</span>';
+      row.innerHTML = `<span>${e.mg}mg — in ${inStr}</span><span>${outStr}</span>`;
+      el.logList.appendChild(row);
+    });
+  }
+}
+
+async function handleAction() {
+  const active = getActiveEntry();
+  el.actionBtn.disabled = true;
+  el.status.textContent = 'saving...';
+  el.status.className = 'status';
+  try {
+    if (active) {
+      const outTs = Date.now();
+      await postAction({ action: 'remove', inTs: active.inTs, outTs: outTs });
+      active.outTs = outTs;
+    } else {
+      const inTs = Date.now();
+      await postAction({ action: 'insert', inTs: inTs, mg: selectedStrength });
+      entries.push({ inTs: inTs, outTs: null, mg: selectedStrength });
+    }
+    el.status.textContent = 'saved';
+  } catch (e) {
+    el.status.textContent = 'save failed: ' + (e && e.message ? e.message : String(e));
+    el.status.className = 'status error';
+  }
+  renderAll();
+}
+
+async function undoLast() {
+  if (entries.length === 0) return;
+  const last = entries[entries.length - 1];
+  el.status.textContent = 'saving...';
+  try {
+    if (last.outTs !== null) {
+      await postAction({ action: 'undo_remove', inTs: last.inTs });
+      last.outTs = null;
+    } else {
+      await postAction({ action: 'undo_insert', inTs: last.inTs });
+      entries.pop();
+    }
+    el.status.textContent = 'saved';
+    el.status.className = 'status';
+  } catch (e) {
+    el.status.textContent = 'undo failed: ' + (e && e.message ? e.message : String(e));
+    el.status.className = 'status error';
+  }
+  renderAll();
+}
+
+el.actionBtn.onclick = handleAction;
+el.undoBtn.onclick = undoLast;
+el.retryBtn.onclick = async () => { await loadEntries(); renderAll(); };
+
+(async function init() {
+  await loadEntries();
+  renderAll();
+  setInterval(() => { if (getActiveEntry()) renderStatus(); }, 30000);
+})();
+</script>
+
+</body>
+</html>
