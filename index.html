@@ -59,10 +59,12 @@
   .empty-state { text-align: center; color: #555; font-size: 13px; padding: 20px 0; }
   .status { text-align: center; font-size: 12px; color: #555; margin-top: 16px; word-break: break-word; }
   .status.error { color: #d9534f; }
-  .retry-btn {
-    display: block; width: 100%; padding: 10px; font-size: 14px; background: transparent;
-    color: #eee; border: 1px solid #d9534f; border-radius: 8px; cursor: pointer; margin-top: 8px;
+  .data-row { display: flex; gap: 8px; margin-top: 8px; }
+  .data-btn {
+    flex: 1; padding: 10px; font-size: 13px; background: transparent;
+    color: #888; border: 1px solid #333; border-radius: 8px; cursor: pointer;
   }
+  .data-note { font-size: 11px; color: #555; margin-top: 8px; line-height: 1.4; }
 </style>
 </head>
 <body>
@@ -92,13 +94,24 @@
 <div class="log-list" id="logList"></div>
 
 <div class="status" id="status">loading...</div>
-<button class="retry-btn" id="retryBtn" style="display:none">Retry loading</button>
+
+<div class="section-label">Data</div>
+<div class="data-row">
+  <button class="data-btn" id="exportBtn">Export backup</button>
+  <button class="data-btn" id="importBtn">Import backup</button>
+</div>
+<div class="data-row">
+  <button class="data-btn" id="sheetImportBtn">Re-import from Google Sheet</button>
+</div>
+<input type="file" id="importFile" accept="application/json,.json" style="display:none">
+<div class="data-note" id="dataNote"></div>
 
 <script>
+// Legacy Google Sheets endpoint. Only used to migrate old data into local storage.
 const SHEET_URL = 'https://script.google.com/macros/s/AKfycbxA6lB0MpILO2_nP2Bppv4TUv7V939vQ1zbkdW73tYkDpLMNwS4tx--hnhPJuKGfzSXEw/exec';
 const STRENGTHS = [6, 11];
 let selectedStrength = 6;
-let entries = []; // {inTs, outTs, mg}
+let entries = []; // {inTs, outTs, mg}, sorted by inTs ascending
 let dataLoaded = false;
 
 const el = {
@@ -114,8 +127,120 @@ const el = {
   statAvg: document.getElementById('statAvg'),
   logList: document.getElementById('logList'),
   status: document.getElementById('status'),
-  retryBtn: document.getElementById('retryBtn'),
+  exportBtn: document.getElementById('exportBtn'),
+  importBtn: document.getElementById('importBtn'),
+  importFile: document.getElementById('importFile'),
+  sheetImportBtn: document.getElementById('sheetImportBtn'),
+  dataNote: document.getElementById('dataNote'),
 };
+
+// ---- Storage layer ----------------------------------------------------------
+// All reads and writes go through this object. To move to a remote backend later,
+// keep this interface (load / save) and add a sync step behind it.
+const STORAGE_KEY = 'pouchTracker.entries.v1';
+const MIGRATED_KEY = 'pouchTracker.migratedFromSheet';
+
+const store = {
+  load() {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    return normalize(JSON.parse(raw));
+  },
+  save(list) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+  },
+  isMigrated() { return localStorage.getItem(MIGRATED_KEY) === '1'; },
+  setMigrated() { localStorage.setItem(MIGRATED_KEY, '1'); },
+};
+
+// Accepts rows from local storage, a backup file, or the Google Sheet
+// (which returns dates as strings) and returns clean, sorted entries.
+function normalize(rows) {
+  return rows.map(r => ({
+    inTs: new Date(r.inTs).getTime(),
+    outTs: r.outTs ? new Date(r.outTs).getTime() : null,
+    mg: Number(r.mg)
+  })).filter(e => !isNaN(e.inTs) && !isNaN(e.mg)).sort((a, b) => a.inTs - b.inTs);
+}
+
+// Merge incoming entries into the current list, keyed by insert time.
+// Existing entries win, except that a completed entry fills in a missing outTs.
+function mergeEntries(current, incoming) {
+  const byIn = new Map(current.map(e => [e.inTs, { ...e }]));
+  let added = 0;
+  incoming.forEach(e => {
+    const existing = byIn.get(e.inTs);
+    if (!existing) { byIn.set(e.inTs, { ...e }); added++; }
+    else if (existing.outTs === null && e.outTs !== null) existing.outTs = e.outTs;
+  });
+  return { list: [...byIn.values()].sort((a, b) => a.inTs - b.inTs), added };
+}
+
+function persist() {
+  try {
+    store.save(entries);
+    return true;
+  } catch (e) {
+    setStatus('save failed: ' + (e && e.message ? e.message : String(e)), true);
+    return false;
+  }
+}
+
+function setStatus(text, isError) {
+  el.status.textContent = text;
+  el.status.className = 'status' + (isError ? ' error' : '');
+}
+
+function updateDataNote() {
+  const first = entries.length ? new Date(entries[0].inTs).toLocaleDateString('en-GB') : null;
+  el.dataNote.textContent = entries.length + ' entries stored on this device' +
+    (first ? ' (since ' + first + ')' : '') +
+    '. Data lives in this browser only. Export a backup regularly.';
+}
+
+// ---- Migration from Google Sheets -------------------------------------------
+async function importFromSheet() {
+  setStatus('importing from Google Sheet...');
+  try {
+    const res = await fetch(SHEET_URL + '?t=' + Date.now(), { method: 'GET', cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    const result = mergeEntries(entries, normalize(rows));
+    entries = result.list;
+    if (!persist()) return;
+    store.setMigrated();
+    setStatus('imported ' + result.added + ' entries from Google Sheet');
+  } catch (e) {
+    setStatus('sheet import failed: ' + (e && e.message ? e.message : String(e)) + '. Tap "Re-import from Google Sheet" to try again.', true);
+  }
+  renderAll();
+}
+
+// ---- Backup export / import ---------------------------------------------------
+function exportBackup() {
+  const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'pouch-tracker-backup-' + todayKey() + '.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  setStatus('backup exported (' + entries.length + ' entries)');
+}
+
+async function importBackup(file) {
+  try {
+    const rows = JSON.parse(await file.text());
+    if (!Array.isArray(rows)) throw new Error('file is not a list of entries');
+    const result = mergeEntries(entries, normalize(rows));
+    entries = result.list;
+    if (persist()) setStatus('imported ' + result.added + ' entries from backup');
+  } catch (e) {
+    setStatus('backup import failed: ' + (e && e.message ? e.message : String(e)), true);
+  }
+  renderAll();
+}
 
 function dayKey(ts) {
   const d = new Date(ts);
@@ -131,39 +256,6 @@ function fmtDuration(ms) {
   return h + 'h ' + m + 'm';
 }
 function getActiveEntry() { return entries.find(e => e.outTs === null) || null; }
-
-async function loadEntries() {
-  el.status.textContent = 'loading from sheet...';
-  el.status.className = 'status';
-  el.retryBtn.style.display = 'none';
-  try {
-    const res = await fetch(SHEET_URL + '?t=' + Date.now(), { method: 'GET', cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const rows = await res.json();
-    entries = rows.map(r => ({
-      inTs: new Date(r.inTs).getTime(),
-      outTs: r.outTs ? new Date(r.outTs).getTime() : null,
-      mg: Number(r.mg)
-    })).filter(e => !isNaN(e.inTs));
-    dataLoaded = true;
-    el.status.textContent = 'ready';
-  } catch (e) {
-    el.status.textContent = 'load failed: ' + (e && e.message ? e.message : String(e));
-    el.status.className = 'status error';
-    el.retryBtn.style.display = 'block';
-    dataLoaded = false;
-  }
-}
-
-async function postAction(body) {
-  const res = await fetch(SHEET_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  return res.json();
-}
 
 function renderStrengthRow() {
   const active = getActiveEntry();
@@ -196,6 +288,7 @@ function renderStatus() {
 
 function renderAll() {
   renderStatus();
+  updateDataNote();
   renderStrengthRow();
 
   const today = todayKey();
@@ -257,58 +350,59 @@ function renderAll() {
   }
 }
 
-async function handleAction() {
+function handleAction() {
   const active = getActiveEntry();
-  el.actionBtn.disabled = true;
-  el.status.textContent = 'saving...';
-  el.status.className = 'status';
-  try {
-    if (active) {
-      const outTs = Date.now();
-      await postAction({ action: 'remove', inTs: active.inTs, outTs: outTs });
-      active.outTs = outTs;
-    } else {
-      const inTs = Date.now();
-      await postAction({ action: 'insert', inTs: inTs, mg: selectedStrength });
-      entries.push({ inTs: inTs, outTs: null, mg: selectedStrength });
-    }
-    el.status.textContent = 'saved';
-  } catch (e) {
-    el.status.textContent = 'save failed: ' + (e && e.message ? e.message : String(e));
-    el.status.className = 'status error';
+  if (active) {
+    active.outTs = Date.now();
+  } else {
+    entries.push({ inTs: Date.now(), outTs: null, mg: selectedStrength });
   }
+  if (persist()) setStatus('saved');
   renderAll();
 }
 
-async function undoLast() {
+function undoLast() {
   if (entries.length === 0) return;
   const last = entries[entries.length - 1];
-  el.status.textContent = 'saving...';
-  try {
-    if (last.outTs !== null) {
-      await postAction({ action: 'undo_remove', inTs: last.inTs });
-      last.outTs = null;
-    } else {
-      await postAction({ action: 'undo_insert', inTs: last.inTs });
-      entries.pop();
-    }
-    el.status.textContent = 'saved';
-    el.status.className = 'status';
-  } catch (e) {
-    el.status.textContent = 'undo failed: ' + (e && e.message ? e.message : String(e));
-    el.status.className = 'status error';
-  }
+  if (last.outTs !== null) last.outTs = null;
+  else entries.pop();
+  if (persist()) setStatus('undone');
   renderAll();
 }
 
 el.actionBtn.onclick = handleAction;
 el.undoBtn.onclick = undoLast;
-el.retryBtn.onclick = async () => { await loadEntries(); renderAll(); };
+el.exportBtn.onclick = exportBackup;
+el.importBtn.onclick = () => el.importFile.click();
+el.importFile.onchange = () => {
+  const file = el.importFile.files[0];
+  el.importFile.value = '';
+  if (file) importBackup(file);
+};
+el.sheetImportBtn.onclick = importFromSheet;
 
-(async function init() {
-  await loadEntries();
+// Keep other open tabs of the app in sync with changes made here.
+window.addEventListener('storage', e => {
+  if (e.key === STORAGE_KEY) { entries = store.load(); renderAll(); }
+});
+
+(function init() {
+  try {
+    entries = store.load();
+    dataLoaded = true;
+    setStatus('ready');
+  } catch (e) {
+    setStatus('could not read local data: ' + (e && e.message ? e.message : String(e)), true);
+  }
   renderAll();
   setInterval(() => { if (getActiveEntry()) renderStatus(); }, 30000);
+
+  // Ask the browser not to evict our data under storage pressure.
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+
+  // One-time migration of existing Google Sheet data. Runs in the background;
+  // the app is fully usable while it runs.
+  if (dataLoaded && !store.isMigrated()) importFromSheet();
 })();
 </script>
 
