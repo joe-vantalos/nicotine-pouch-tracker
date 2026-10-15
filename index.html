@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Pouch Tracker</title>
+<link rel="icon" type="image/svg+xml" href="icons/logo.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#111111">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -14,7 +19,8 @@
     max-width: 480px;
     margin: 0 auto;
   }
-  h1 { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #999; }
+  h1 { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #999; display: flex; align-items: center; gap: 10px; }
+  h1 img { width: 28px; height: 28px; }
   .current-status { text-align: center; padding: 20px 0 8px; }
   .current-status .state { font-size: 28px; font-weight: 700; }
   .current-status .detail { font-size: 13px; color: #888; margin-top: 4px; }
@@ -69,7 +75,7 @@
 </head>
 <body>
 
-<h1>Pouch Tracker</h1>
+<h1><img src="icons/logo.svg" alt="">Pouch Tracker</h1>
 
 <div class="current-status">
   <div class="state" id="stateText">-</div>

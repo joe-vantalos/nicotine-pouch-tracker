@@ -35,3 +35,10 @@ added behind it without changing the rest of the app. Free options:
 | Supabase | 500 MB Postgres | Project pauses after 7 days with no requests. |
 | Firebase Firestore | 1 GB, 50k reads / 20k writes per day | Built-in offline cache suits this app. |
 | Cloudflare Workers + D1 | 5 GB, 100k requests per day | Needs a small Worker script. |
+
+## Logo and icons
+
+The source logo is `icons/logo.svg`. It is used as the browser tab icon and in the page header.
+The PNG files in `icons/` are rendered from it for the iPhone home screen (`apple-touch-icon.png`),
+Android home screen (`icon-192.png`, `icon-512.png`, listed in `manifest.webmanifest`) and older
+browsers (`favicon-32.png`). If the SVG changes, re-render the PNGs.
