@@ -39,6 +39,6 @@ added behind it without changing the rest of the app. Free options:
 ## Logo and icons
 
 The source logo is `icons/logo.svg`. It is used as the browser tab icon and in the page header.
-The PNG files in `icons/` are rendered from it for the iPhone home screen (`apple-touch-icon-v2.png`; rename it again when it changes, as iOS caches it by file name),
+The PNG files in `icons/` are rendered from it for the iPhone home screen (`apple-touch-icon-v2.png`, which is also embedded in `index.html` as a data URI; re-embed it when it changes),
 Android home screen (`icon-192.png`, `icon-512.png`, listed in `manifest.webmanifest`) and older
 browsers (`favicon-32.png`). If the SVG changes, re-render the PNGs.
