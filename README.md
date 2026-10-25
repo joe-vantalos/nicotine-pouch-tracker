@@ -8,12 +8,10 @@ Single-page app (`index.html`) for logging nicotine pouch use.
 index.html             The whole app: markup, styles and script
 manifest.webmanifest   Home screen app settings (name, colours, Android icons)
 icons/                 Logo source (logo.svg) and the PNGs rendered from it
-TODO.md                Build tracker: what is done, in progress and undecided
-docs/                  Decisions and specs (backend, logo, feature ideas)
 README.md              This file
 ```
 
-GitHub is the only place the code is kept. Your usage data is not in the repository:
+This repository holds only the shipped app. Your usage data is not in the repository:
 it is stored in the browser on each device (see Storage below).
 
 ## Storage
