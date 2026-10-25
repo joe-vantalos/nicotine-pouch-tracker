@@ -229,7 +229,20 @@ function levelBand(ng) {
   if (ng < 10) return { name: 'Gum range', meaning: 'About the level nicotine gum or an inhaler gives through the day.' };
   if (ng < 15) return { name: 'Gum and smoker range', meaning: 'Where the nicotine gum range and a daily smoker\'s range overlap.' };
   if (ng <= 50) return { name: 'Smoker range', meaning: 'Within the range a daily smoker has through the day.' };
-  return { name: 'Above smoker range', meaning: 'Above the peak most daily smokers reach.' };
+  return { name: 'Above smoker range', meaning: 'Above the usual range for daily smokers. A comparison, not a danger line.' };
+}
+
+// Share of the brain's main nicotine receptors (alpha4beta2) filled at a blood level.
+// Fitted binding curve from a smoker PET study: half filled at 0.87 ng/mL (Brody 2006).
+// An estimate: no study has measured this for pouches.
+function receptorShare(ng) { return ng / (ng + 0.87); }
+
+// A pouch that went in while another was in, or within an hour of the last coming
+// out. Most of the last one is still in the blood (2 h half-life), so the dose adds.
+function doubledUp(entries, active) {
+  if (!active) return false;
+  const prev = entries.filter(e => e !== active && e.inTs < active.inTs).at(-1);
+  return !!prev && (prev.outTs === null || active.inTs - prev.outTs < HOUR);
 }
 
 function hoursBelow(series, low) {
@@ -354,14 +367,19 @@ function aftercareState(entries, settings, now) {
   };
 }
 
-// General pattern of nicotine withdrawal. PROVISIONAL wording until stage D
-// confirms it against peer-reviewed sources.
+// What usually happens after stopping, from studies of people who stopped smoking.
+// No study has followed people stopping pouches. Evidence: workspace shared/research/
+// withdrawal-mood-sleep.md, brain-and-receptors.md, oral-and-metabolic.md.
 const PHASES = [
-  { from: 0, to: 3, when: 'Days 1 to 3', text: 'Usually the hardest stretch: strong cravings, irritability, restlessness, poor focus.' },
-  { from: 3, to: 14, when: 'Days 4 to 14', text: 'Symptoms usually ease. Cravings come less often but can still be sharp, mostly at your usual pouch times.' },
-  { from: 14, to: 28, when: 'Weeks 3 to 4', text: 'For most people the physical symptoms have largely passed.' },
-  { from: 28, to: 90, when: 'Months 1 to 3', text: 'Cravings tend to be tied to triggers: drinking, stress, the moments you used to have one.' },
-  { from: 90, to: Infinity, when: 'After 3 months', text: 'An occasional craving can still come, even years on. Each one passes.' }
+  { from: 0, to: 7, when: 'Week 1',
+    text: 'Withdrawal is usually at its worst: irritability, anxiety, low mood, poor focus, restlessness, hunger and cravings. Sleep may be broken for the first few nights.',
+    src: 'Hughes 2007; Wetter 1995' },
+  { from: 7, to: 28, when: 'Weeks 2 to 4', text: 'Symptoms usually ease, and for most people are gone by 2 to 4 weeks. Mood often dips in the first weeks. The brain still has more nicotine receptors than usual.',
+    src: 'Hughes 2007; Klemperer 2021; Mamede 2007' },
+  { from: 28, to: 90, when: 'Months 1 to 3', text: 'Receptor numbers return to normal, somewhere between 3 and 12 weeks. Mood is usually better than before stopping. People who stop smoking gain about 4 to 5 kg in the first year, mostly in the first 3 months; some lose weight.',
+    src: 'Mamede 2007; Cosgrove 2009; Taylor 2014; Aubin 2012' },
+  { from: 90, to: Infinity, when: 'After 3 months', text: 'Urges keep fading but can come back with cues: drinking, stress, the moments you used to have one. At 6 months about 1 in 8 ex-smokers still had strong urges. At a year about a third had urges, none of them strong. Each one passes.',
+    src: 'Ussher 2013' }
 ];
 
 // ---- Formatting ----

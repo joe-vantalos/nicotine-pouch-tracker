@@ -11,6 +11,7 @@ styles.css             All styles; colours are tokens on :root
 store.js               Storage: load, save, normalise, merge, settings defaults
 model.js               Calculations: stats, baseline, plan, nicotine estimate, score, coach, aftercare
 ui.js                  Screens, overlays and actions
+learn.js               Words on the Learn screen, with sources
 sw.js                  Offline support: keeps a copy of the app on the device
 manifest.webmanifest   Home screen app settings (name, colours, Android icons)
 icons/                 Logo source (logo.svg) and the PNGs rendered from it
@@ -29,7 +30,10 @@ it is stored in the browser on each device (see Storage below).
   After 24 hours with no pouch, Now becomes the aftercare view.
 - **Plan**: steps from the baseline week to zero, by count or by strength.
 - **History**: week or month, trend against the previous period, every day.
-- **Nicotine in you**, **Capacity**, **Profile** (products, tins, wake time, body weight, data).
+- **Nicotine in you**: the level, what it does (heart rate, blood pressure, receptors), what if.
+- **Learn**: what nicotine does, with your numbers: heart, brain, withdrawal, sleep, sport,
+  long-term risk, mouth and body, safety. Summaries of peer-reviewed studies.
+- **Capacity**, **Profile** (products, tins, wake time, bedtime, body weight, data).
 - Overlays: log a pouch (now or earlier), edit or delete an entry, a day's log,
   "Still in?", the check-in ("Have you had none?"), and "I'm craving".
 
@@ -61,7 +65,7 @@ Data is stored in the browser's `localStorage`:
 | Key | Holds |
 | --- | --- |
 | `pouchTracker.entries.v1` | Entries `{ inTs, outTs, mg, productId?, tag? }` |
-| `pouchTracker.settings.v1` | Products, usual product, wake time, body weight, plan, check-in confirmations, backup dates |
+| `pouchTracker.settings.v1` | Products, usual product, wake time, bedtime, body weight, plan, check-in confirmations, backup dates |
 | `pouchTracker.cravings.v1` | Cravings `{ ts, tag?, outcome? }` |
 
 Times are milliseconds since epoch. `outTs` is `null` while the pouch is in.

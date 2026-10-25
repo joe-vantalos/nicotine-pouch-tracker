@@ -7,7 +7,7 @@ let settings = null;
 let cravings = [];     // { ts, tag?, outcome? }
 let dataLoaded = false;
 let overlay = null;    // the open sheet or panel, with its form state
-let ui = { range: 'week', scenario: 'none', scoreOpen: 0, phaseOpen: null, readTs: null };
+let ui = { range: 'week', scenario: 'none', scoreOpen: 0, phaseOpen: null, readTs: null, learnOpen: 'level' };
 let toastTimer = null, cravingTimer = null;
 let statusText = { text: 'loading...', error: false };
 
@@ -118,12 +118,18 @@ function viewNow(c) {
   if (c.after) return viewAftercare(c);
   const sub = fmtDay(c.now) + ' · ' + fmtTime(c.now) + ' · ' +
     (c.plan ? 'Plan week ' + c.plan.week : c.base.complete ? 'Baseline ready' : 'Baseline day ' + c.base.day + ' of 7');
-  return header('Today', sub) + backupCard(c) + weekStrip(c) + pouchCard(c) + (c.plan ? '' : baselineCard(c)) + nicotineCard(c) +
+  return header('Today', sub) + backupCard(c) + weekStrip(c) + pouchCard(c) + doseNote(c) + (c.plan ? '' : baselineCard(c)) + nicotineCard(c) +
     (c.plan ? scoreAndPlanCards(c) + coachCard(c) : '') +
     '<div class="row" style="margin-top:4px"><div class="label">Today\'s log</div><div class="small">' +
     (c.todayStats.gaps.length ? 'Longest gap ' + fmtMin(Math.max(...c.todayStats.gaps)) : '') +
     (pricesKnown(settings) ? ' · ' + fmtMoney(c.todayStats.spend) : '') + '</div></div>' +
     logList(c.todayStats.list, c) + '<div id="status" class="status' + (statusText.error ? ' error' : '') + '">' + esc(statusText.text) + '</div>';
+}
+
+function doseNote(c) {
+  if (!doubledUp(entries, c.active)) return '';
+  return '<div class="card dashed"><div class="strong" style="font-size:14px">This roughly doubles the dose.</div>' +
+    '<div class="small" style="margin-top:4px">This pouch went in within an hour of the last one. Most of the last one is still in your blood, because it halves only about every 2 hours.</div></div>';
 }
 
 function weekStrip(c) {
@@ -245,7 +251,7 @@ function viewAftercare(c) {
       '<span style="width:12px;height:12px;border-radius:6px;margin-top:4px;flex:none;border:2px solid ' + (i <= phaseIdx ? 'var(--accent)' : '#3A3F45') + ';background:' + (i < phaseIdx ? 'var(--accent)' : 'transparent') + '"></span>' +
       '<div style="flex:1"><div class="row"><span style="font-size:14px;font-weight:800;color:' + (i <= phaseIdx ? 'var(--text)' : 'var(--muted)') + '">' + p.when + '</span>' +
       (i === phaseIdx ? '<span class="label accent">You are here</span>' : '') + '</div>' +
-      (i === open ? '<div class="body" style="color:var(--soft);margin-top:4px">' + p.text + '</div>' : '') + '</div></div></button>';
+      (i === open ? '<div class="body" style="color:var(--soft);margin-top:4px">' + p.text + '</div><div class="small" style="margin-top:4px">' + p.src + '</div>' : '') + '</div></div></button>';
   });
   const days = Math.min(14, a.day), bars = [];
   for (let i = days - 1; i >= 0; i--) {
@@ -259,10 +265,10 @@ function viewAftercare(c) {
     '<div class="grid2">' +
     stat('Not spent', pricesKnown(settings) ? fmtMoney(a.notSpent) : '–', pricesKnown(settings) ? 'At your previous rate' : 'Add tin prices in Profile') +
     stat('Not used', String(a.notUsed), 'Pouches, about ' + a.notUsedMg + ' mg') +
-    stat('Nicotine in you', a.sinceMs > DAY ? 'None' : 'Low', 'Estimate, 2 h half-life') +
+    stat('Nicotine in you', a.sinceMs > DAY ? 'None' : 'About ' + fmtNg(levelNow(entries, c.now, 'mid')) + ' ng/mL', 'Estimate, halves about every 2 hours') +
     stat('Longest ever', fmtMin(a.longest / MIN).replace(/^(\d+)h.*/, (m, h) => h >= 48 ? Math.floor(h / 24) + ' days' : m), a.record ? 'This is your record' : 'Your record so far') +
     '</div><div class="label" style="margin-top:4px">Where you should be by now</div><div class="list" style="padding:4px 0">' + phases + '</div>' +
-    '<div class="small" style="padding:0 4px">The general pattern most people follow. Still to be checked against peer-reviewed sources. Not medical advice.</div>' +
+    '<div class="small" style="padding:0 4px">What usually happens, from studies of people who stopped smoking. Pouch users have not been studied yet. Information, not medical advice. Low mood that does not lift is worth taking to a GP.</div>' +
     '<div class="label" style="margin-top:4px">Cravings you logged</div><div class="card"><div class="bars" style="height:64px">' +
     bars.map(v => '<div class="bar" style="height:' + Math.round(v / maxC * 64) + 'px;background:#3A6F5E"></div>').join('') +
     '</div><div class="axis"><span>' + (days === 14 ? '14 days ago' : 'Day 1') + '</span><span>Today</span></div>' +
@@ -362,9 +368,21 @@ function viewNicotine(c) {
   const stat = (l, v, s) => '<div class="card" style="padding:12px 14px"><div class="label">' + l + '</div><div class="num" style="font-size:20px;margin-top:4px">' + v + '</div><div class="small">' + s + '</div></div>';
   const gaps = c.todayStats.gaps;
   const ts = ui.readTs !== null && ui.readTs >= chart.from && ui.readTs <= chart.to ? ui.readTs : c.now;
+  const cur = levelNow(base, c.now, 'mid');
+  const receptors = cur < 0.5 ? 'With almost no nicotine in your blood, few receptors are filled.'
+    : 'At about ' + fmtNg(cur) + ' ng/mL now, roughly ' + Math.round(receptorShare(cur) * 100) + '% of the brain\'s main nicotine receptors are filled. Even low levels fill most of them, so a lower blood peak does not mean a smaller effect on the brain.';
+  const effect = (title, text, src) => '<div class="list-row" style="display:block"><div style="font-size:14px;font-weight:700">' + title + '</div>' +
+    '<div class="body" style="color:var(--soft);margin-top:2px">' + esc(text) + '</div><div class="small" style="margin-top:2px">' + src + '</div></div>';
+  const effects = '<div class="label" style="margin-top:4px">What this level does</div><div class="list">' +
+    effect('Heart rate', 'About +5 to +15 beats a minute from the first pouch of the day, starting within 5 minutes. Later pouches usually raise it less, and the sensitivity largely returns overnight.', 'Wolk 2005; Antoniewicz 2018; Mallock-Ohnesorg 2024; Benowitz 2010') +
+    effect('Blood pressure', 'About +5 to +10 mmHg. Adrenaline rises too, by about half in one snuff study.', 'Wolk 2005; Antoniewicz 2018') +
+    effect('How long', 'While your level is up, often past the time the pouch is out.', 'Antoniewicz 2018') +
+    effect('Brain', receptors, 'Brody 2006, a smoker study; an estimate') +
+    '</div><div class="small" style="padding:0 4px">Information, not medical advice. If you have heart disease or high blood pressure, talk to your GP. <a href="#learn" style="color:var(--accent);font-weight:700">Learn more</a></div>';
   const weightLine = settings.weightKg ? 'It uses your weight, ' + settings.weightKg + ' kg. ' : 'It uses ' + DEFAULT_WEIGHT_KG + ' kg until you set your weight in Profile. ';
   return header('Nicotine in you', fmtDay(c.now) + ' · estimate', 'now') +
     '<div class="card"><div id="lvlRead">' + readingHtml(ts) + '</div><div style="margin-top:14px">' + levelChart(c, extra) + '</div></div>' +
+    effects +
     '<div class="label" style="margin-top:4px">What if</div><div class="segment" style="grid-template-columns:repeat(3,1fr)">' + seg + '</div>' +
     '<div class="body" style="color:var(--soft)">' + esc(text) + '</div>' +
     '<div class="grid2">' +
@@ -377,6 +395,30 @@ function viewNicotine(c) {
     'Nearly all released nicotine enters the blood through the mouth. It spreads through about 2.6 litres for each kg of body weight and halves about every 2 hours (Benowitz, Hukkanen and Jacob 2009). ' + weightLine +
     'The likely range allows for slower or faster release, uptake and clearance. The shaded ranges are the steady daily levels of nicotine gum users (5 to 15 ng/mL) and daily smokers (10 to 50 ng/mL) (Benowitz 2009). ' +
     'The studies measured one pouch at a time, so your level may differ by half or double. An estimate, not a measurement or medical advice.</div></div>';
+}
+
+// ---- Learn ----
+
+// Tonight's bedtime, or tomorrow's if it falls after midnight.
+function bedtimeTs(c) {
+  const [h, m] = settings.bedTime.split(':').map(Number);
+  const t = c.today + h * HOUR + m * MIN;
+  return h < 12 ? addDays(t, 1) : t;
+}
+
+function viewLearn(c) {
+  const topics = LEARN.map(t => {
+    const open = ui.learnOpen === t.id;
+    let yours = null;
+    try { yours = t.yours ? t.yours(c) : null; } catch (e) { yours = null; }
+    return '<div class="card" style="padding:0"><button class="list-row" style="border:0;width:100%;display:block;text-align:left;padding:14px 16px" data-act="learnTopic" data-id="' + t.id + '">' +
+      '<div class="row"><div class="strong">' + esc(t.title) + '</div><span class="small">' + (open ? 'Close' : 'Open') + '</span></div>' +
+      (yours ? '<div class="small" style="margin-top:4px;color:var(--accent)">' + esc(yours) + '</div>' : '') + '</button>' +
+      (open ? '<div style="padding:0 16px 14px"><ul class="learn-points">' + t.points.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>' +
+        '<div class="small" style="margin-top:8px">' + esc(t.src) + '</div></div>' : '') + '</div>';
+  }).join('');
+  return header('Learn', 'What nicotine does, with your numbers', 'nicotine') + topics +
+    '<div class="small" style="padding:0 4px">Summaries of peer-reviewed studies. Most are of cigarettes or snus; pouches are named where they were studied. Information, not medical advice.</div>';
 }
 
 // ---- Score ----
@@ -441,7 +483,7 @@ function viewPlan(c) {
     row('Gap between', 'At least, during the day', fmtMin(t.gap)) + row('First pouch', 'After waking (' + settings.wakeTime + ')', fmtMin(t.first) + '+') + '</div>' +
     '<div class="body" style="padding:0 4px">Why these: they step down evenly from your baseline week to zero over ' + p.N + ' steps. ' +
     (lastWeek ? (lastWeek.met ? 'Last week met its target, so the plan moved on.' : 'Last week went over its target, so this step is held.') : 'This is your first week.') +
-    ' The gap and first-pouch targets are provisional.</div>' + nextTinCard(c) + reviewCard(c) +
+    ' Cutting down to a set quit date worked about as well as stopping at once in a review of 22 trials (Lindson 2019). The trials tested cutting down to a date, not cutting down with no end, so your plan has one. The gap and first-pouch targets are provisional.</div>' + nextTinCard(c) + reviewCard(c) +
     '<div class="label" style="margin-top:4px">Plan settings</div>' + planOptions() +
     '<button class="btn outline full" data-act="restartPlan">Restart the plan from today</button>';
 }
@@ -535,9 +577,11 @@ function viewProfile(c) {
     '<select data-act-change="usual" style="background:#24282D;border:1px solid var(--line);border-radius:12px;height:44px;padding:0 10px;font-weight:700;color-scheme:dark">' +
     settings.products.map(p => '<option value="' + esc(p.id) + '"' + (p.id === settings.usualProductId ? ' selected' : '') + '>' + esc(p.name) + '</option>').join('') + '</select></div>' +
     '<div class="list-row"><div><div style="font-size:14px;font-weight:700">Wake time</div><div class="small">For "first pouch after waking"</div></div><input type="time" value="' + settings.wakeTime + '" data-act-change="wake" style="background:#24282D;border:1px solid var(--line);border-radius:12px;height:44px;padding:0 10px;font-weight:700;color-scheme:dark"></div>' +
+    '<div class="list-row"><div><div style="font-size:14px;font-weight:700">Bedtime</div><div class="small">For nicotine in the 4 hours before bed</div></div><input type="time" value="' + settings.bedTime + '" data-act-change="bed" style="background:#24282D;border:1px solid var(--line);border-radius:12px;height:44px;padding:0 10px;font-weight:700;color-scheme:dark"></div>' +
     '<div class="list-row"><div><div style="font-size:14px;font-weight:700">Body weight</div><div class="small">' + (settings.weightKg ? 'For the blood nicotine estimate' : 'Not set. The estimate uses ' + DEFAULT_WEIGHT_KG + ' kg') + '</div></div>' +
     '<div class="row" style="gap:6px"><input type="number" inputmode="decimal" min="30" max="250" step="0.5" placeholder="' + DEFAULT_WEIGHT_KG + '" value="' + (settings.weightKg || '') + '" data-act-change="weight" aria-label="Body weight in kg" style="width:76px;background:#24282D;border:1px solid var(--line);border-radius:12px;height:44px;padding:0 10px;font-weight:700;color-scheme:dark"><span class="small">kg</span></div></div>' +
     '<div class="list-row"><div><div style="font-size:14px;font-weight:700">Check-ins</div><div class="small">Shown when you open the app after a pouch-free stretch. Phone notifications are not built yet.</div></div><button class="pill' + (settings.checkins ? ' on' : '') + '" data-act="toggleCheckins">' + (settings.checkins ? 'On' : 'Off') + '</button></div></div>' +
+    '<a class="card coach" href="#learn" style="margin-top:6px"><div class="row"><div class="strong">Learn what nicotine does</div><span style="font-size:13px;font-weight:800;color:var(--accent)">Open</span></div><div class="small" style="margin-top:4px">Heart, brain, withdrawal, sleep, sport, long-term risk and safety, with your numbers.</div></a>' +
     '<div class="label" style="margin-top:6px">Products and tins</div><div class="list">' + products + '</div>' +
     '<button class="btn outline full" data-act="openProduct" data-id="">Add a product</button>' +
     '<div class="label" style="margin-top:6px">Data</div><div class="row"><button class="btn outline flex" data-act="export">Export backup</button><button class="btn outline flex" data-act="import">Import backup</button></div>' +
@@ -617,7 +661,7 @@ function overlayCraving() {
     '<svg width="180" height="180" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15" fill="none" stroke="#1E2125" stroke-width="2.4"/><circle id="cravRing" cx="18" cy="18" r="15" fill="none" stroke="#5EE0B0" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="' + (o.left / 300 * C).toFixed(1) + ' ' + C.toFixed(1) + '" transform="rotate(-90 18 18)"/></svg>' +
     '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center"><div class="big" id="cravClock">' + Math.floor(o.left / 60) + ':' + String(o.left % 60).padStart(2, '0') + '</div><div class="small">give it 5 minutes</div></div></div></div>' +
     '<div class="strong" style="font-size:17px;text-align:center;line-height:1.35">A craving rises, peaks and fades.</div>' +
-    '<div class="body" style="text-align:center">Drink some water, step outside, or change what you are doing. How long cravings last is still being researched.</div>' +
+    '<div class="body" style="text-align:center">Drink some water, step outside, or change what you are doing. A craving has no fixed length; waiting gives it room to pass. Over the months, urges come less often and less strongly (Ussher 2013).</div>' +
     '<button class="btn quiet full" data-act="cravTimer">' + (o.running ? 'Pause' : o.left === 300 ? 'Start 5 minutes' : o.left === 0 ? 'Finished' : 'Resume') + '</button>' +
     '<div class="label">What set it off? (optional)</div>' + tagChoices(o.tag) +
     '<div class="grid2"><button class="btn accent" data-act="cravPassed">It passed</button><button class="btn outline" data-act="cravHad">I had a pouch</button></div></div>';
@@ -855,6 +899,7 @@ const actions = {
   scenario(t) { ui.scenario = t.dataset.s; render(); },
   scorePart(t) { const i = Number(t.dataset.i); ui.scoreOpen = ui.scoreOpen === i ? -1 : i; render(); },
   phase(t) { const i = Number(t.dataset.i); ui.phaseOpen = ui.phaseOpen === i ? -1 : i; render(); },
+  learnTopic(t) { ui.learnOpen = ui.learnOpen === t.dataset.id ? null : t.dataset.id; render(); },
   export: exportBackup,
   import() { $importFile.click(); },
   snoozeBackup() { settings.backupSnoozeTs = Date.now(); persist(); render(); }
@@ -891,6 +936,7 @@ document.addEventListener('change', ev => {
   if (overlay && t.dataset.bind && t.type === 'datetime-local') renderOverlay();
   if (t.dataset.actChange === 'usual') { settings.usualProductId = t.value; persist(); render(); }
   if (t.dataset.actChange === 'wake' && /^\d\d:\d\d$/.test(t.value)) { settings.wakeTime = t.value; persist(); render(); }
+  if (t.dataset.actChange === 'bed' && /^\d\d:\d\d$/.test(t.value)) { settings.bedTime = t.value; persist(); render(); }
   if (t.dataset.actChange === 'weight') {
     const kg = Number(t.value);
     if (t.value === '') settings.weightKg = null;
@@ -979,7 +1025,7 @@ function backupCard(c) {
 
 // ---- Rendering ----
 
-const VIEWS = { now: viewNow, plan: viewPlan, history: viewHistory, profile: viewProfile, nicotine: viewNicotine, score: viewScore };
+const VIEWS = { now: viewNow, plan: viewPlan, history: viewHistory, profile: viewProfile, nicotine: viewNicotine, score: viewScore, learn: viewLearn };
 
 function route() { const r = location.hash.slice(1); return VIEWS[r] ? r : 'now'; }
 

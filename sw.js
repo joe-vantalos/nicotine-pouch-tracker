@@ -8,10 +8,11 @@ const CACHE = 'pouch-tracker-v1';
 const PAGE = './';
 const SHELL = [
   PAGE,
-  'styles.css?v=6',
-  'store.js?v=7',
-  'model.js?v=5',
-  'ui.js?v=8',
+  'styles.css?v=7',
+  'store.js?v=8',
+  'model.js?v=6',
+  'learn.js?v=1',
+  'ui.js?v=9',
   'manifest.webmanifest?v=2',
   'icons/logo.svg?v=2',
   'icons/favicon-32.png?v=2',
