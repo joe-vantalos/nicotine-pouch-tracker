@@ -30,7 +30,12 @@ it is stored in the browser on each device (see Storage below).
   After 24 hours with no pouch, Now becomes the aftercare view.
 - **Plan**: steps from the baseline week to zero, by count or by strength.
 - **History**: week or month, trend against the previous period, every day.
-- **Nicotine in you**: the level, what it does (heart rate, blood pressure, receptors), what if.
+- **Your body, now and next** (from the Nicotine card on Now): the level against your usual,
+  a chart centred on now (6, 12 or 24 hours; tap to read any time), and each body system
+  (brain and mood, heart, sleep, appetite and gut, exercise, mouth): its state now, its
+  next change on your curve, why, what you might notice, and the source.
+- **What if**: no more, one now, or wait. What each changes for the rest of today, system
+  by system, with a suggestion.
 - **Learn**: what nicotine does, with your numbers: heart, brain, withdrawal, sleep, sport,
   long-term risk, mouth and body, safety. Summaries of peer-reviewed studies.
 - **Capacity**, **Profile** (products, tins, wake time, bedtime, body weight, data).
@@ -47,6 +52,9 @@ pouch's strength and time in mouth and your body weight (Profile; 70 kg if not s
 - About 95% of released nicotine reaches the blood, spread through 2.6 L/kg, with a
   2 h half-life (Benowitz, Hukkanen & Jacob 2009). Pouches add up.
 - The range uses slower and faster release, uptake (80-100%) and half-life (1.5-3 h).
+- Craving: a pouch eases it within 5-15 min, most at 15-40 min; it usually returns 60-90
+  min after the pouch went in (Keller-Hamilton 2024, 2025; Hansson 2019). No blood level
+  marks the moment, so the app shows a time window, not a threshold.
 - Under the number, the level is compared with your usual daytime level (your average
   between 08:00 and 22:00 over the last 7 days with a pouch), with what is happening
   in the body: rising or falling, and the share of nicotine receptors filled.

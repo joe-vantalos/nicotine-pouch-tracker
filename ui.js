@@ -7,7 +7,7 @@ let settings = null;
 let cravings = [];     // { ts, tag?, outcome? }
 let dataLoaded = false;
 let overlay = null;    // the open sheet or panel, with its form state
-let ui = { range: 'week', scenario: 'none', scoreOpen: 0, phaseOpen: null, readTs: null, learnOpen: 'level' };
+let ui = { range: 'week', scoreOpen: 0, phaseOpen: null, readTs: null, learnOpen: 'level', zoom: 24, bodyOpen: 'brain', pick: 'none' };
 let toastTimer = null, cravingTimer = null;
 let statusText = { text: 'loading...', error: false };
 
@@ -296,14 +296,14 @@ function viewAftercare(c) {
     '<div id="status" class="status">' + esc(statusText.text) + '</div>';
 }
 
-// ---- Nicotine detail ----
+// ---- Your body, now and next ----
 
 // The series behind the chart on screen, for the reading that follows a tap or drag.
 let chart = null;
 
 function chartTop(v) { return [20, 30, 40, 60, 80, 100, 150].find(t => t >= v * 1.1) || Math.ceil(v / 50) * 50; }
 
-// The level at `ts` on the chart, with its likely range and what the level means.
+// The level at `ts` on the chart, with its likely range and what it means.
 function readingHtml(ts) {
   const i = clamp(Math.round((ts - chart.from) / (STEP_MIN * MIN)), 0, chart.mid.length - 1);
   const t = chart.mid[i][0], v = chart.mid[i][1], isNow = Math.abs(t - chart.now) < STEP_MIN * MIN;
@@ -311,7 +311,7 @@ function readingHtml(ts) {
   const rising = isNow ? chart.pouchIn : i > 0 && v > chart.mid[i - 1][1] + 0.01;
   const when = isNow ? 'Now' : t > chart.now ? fmtTime(t) + ', if you take no more' : fmtTime(t);
   return '<div class="label">' + esc(when) + '</div>' +
-    '<div class="num" style="margin-top:4px">About ' + fmtNg(v) + ' ng/mL</div>' +
+    '<div class="num" style="margin-top:4px">About ' + fmtNg(v) + ' <span class="small" style="font-size:14px">ng/mL</span></div>' +
     '<div class="small">' + vsUsual(v, chart.usual) + (chart.usual && v >= 0.5 ? ' (' + fmtNg(chart.usual) + ' ng/mL)' : '') + (chart.hi[i][1] >= 0.5 ? ' · likely ' + fmtNg(chart.lo[i][1]) + ' to ' + fmtNg(chart.hi[i][1]) : '') + '</div>' +
     '<div class="body" style="margin-top:6px;color:var(--soft)">' + esc(inYourBody(v, rising)) + '</div>';
 }
@@ -326,96 +326,226 @@ function showReading() {
   mark.style.left = ((ts - chart.from) / (chart.to - chart.from) * 100) + '%';
 }
 
-// y-axis in ng/mL; nicotine gum (5-15) and smoker (10-50) ranges shaded behind;
-// the likely range as a band around the central estimate.
-function levelChart(c, extra) {
+// Now in the middle, the past to the left, the next hours to the right. y-axis in
+// ng/mL; your usual level dashed; when craving is likely to return and the 4 hours
+// before bed shaded; nicotine gum and smoker ranges faint in the background.
+function levelChart(c) {
   const W = 300, H = 170, { from, to, mid, lo, hi } = chart;
-  const top = chartTop(Math.max(15, ...hi.map(p => p[1]), ...extra.map(p => p[1])));
-  const x = t => ((t - from) / (to - from) * W).toFixed(1);
+  const top = chartTop(Math.max(15, chart.usual || 0, ...hi.map(p => p[1])));
+  const x = t => ((clamp(t, from, to) - from) / (to - from) * W).toFixed(1);
   const y = v => (H - Math.min(v, top) / top * H).toFixed(1);
   const path = pts => pts.map((p, i) => (i ? 'L' : 'M') + x(p[0]) + ' ' + y(p[1])).join(' ');
   const rect = (a, b, fill) => '<rect x="0" width="' + W + '" y="' + y(b) + '" height="' + (y(a) - y(b)).toFixed(1) + '" fill="' + fill + '"/>';
+  const span = (a, b, fill) => b > from && a < to ? '<rect y="0" height="' + H + '" x="' + x(a) + '" width="' + (x(b) - x(a)) + '" fill="' + fill + '"/>' : '';
   const step = top <= 20 ? 5 : top <= 60 ? 10 : 25;
   const ticks = []; for (let v = 0; v <= top; v += step) ticks.push(v);
-  const nx = x(clamp(c.now, from, to));
   const past = mid.filter(p => p[0] <= c.now), future = mid.filter(p => p[0] >= c.now);
+  const bed = bedtimeTs(c);
   let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' +
-    rect(5, 15, 'rgba(94,224,176,0.08)') + rect(10, Math.min(50, top), 'rgba(245,160,74,0.08)');
+    rect(5, 15, 'rgba(94,224,176,0.06)') + rect(10, Math.min(50, top), 'rgba(245,160,74,0.05)') +
+    span(bed - 4 * HOUR, bed, 'rgba(120,140,255,0.12)');
+  if (chart.lastIn) s += span(chart.lastIn + CRAVING.backFrom * MIN, chart.lastIn + CRAVING.backLate * MIN, 'rgba(245,160,74,0.16)');
   ticks.forEach(v => { s += '<line x1="0" x2="' + W + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="#2A2E33" stroke-width="1" vector-effect="non-scaling-stroke"/>'; });
-  s += '<path d="' + path(hi) + ' ' + path([...lo].reverse()).replace('M', 'L') + ' Z" fill="rgba(94,224,176,0.12)"/>';
+  if (chart.usual) s += '<line x1="0" x2="' + W + '" y1="' + y(chart.usual) + '" y2="' + y(chart.usual) + '" stroke="#8B9099" stroke-dasharray="2 4" vector-effect="non-scaling-stroke"/>';
+  s += '<path d="' + path(hi) + ' ' + path([...lo].reverse()).replace('M', 'L') + ' Z" fill="rgba(94,224,176,0.07)"/>';
   if (past.length > 1) s += '<path d="' + path(past) + '" fill="none" stroke="#5EE0B0" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>';
   if (future.length > 1) s += '<path d="' + path(future) + '" fill="none" stroke="#5EE0B0" stroke-width="2" stroke-dasharray="4 4" opacity="0.6" vector-effect="non-scaling-stroke"/>';
-  if (extra.length > 1) s += '<path d="' + path(extra) + '" fill="none" stroke="#F5A04A" stroke-width="2" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>';
-  s += '<line x1="' + nx + '" x2="' + nx + '" y1="0" y2="' + H + '" stroke="#F4F5F6" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>';
+  s += '<line x1="' + x(c.now) + '" x2="' + x(c.now) + '" y1="0" y2="' + H + '" stroke="#F4F5F6" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>';
   const pct = v => (100 - Math.min(v, top) / top * 100) + '%';
   const yLabels = ticks.map(v => '<span style="top:' + pct(v) + '">' + v + '</span>').join('');
-  const bandLabels = '<span class="lvl-band" style="top:' + pct(15) + '">Gum</span>' +
-    (top > 20 ? '<span class="lvl-band warm" style="top:' + pct(Math.min(50, top)) + '">Smoker</span>' : '');
-  const marks = c.todayStats.list.map(e => {
-    const l = (e.inTs - from) / DAY * 100, w = Math.max(((e.outTs || c.now) - e.inTs) / DAY * 100, 1);
-    return '<span style="position:absolute;left:' + l + '%;width:' + w + '%;top:0;height:8px;border-radius:3px;background:' + mgColor(e.mg) + '"></span>';
+  const marks = entries.filter(e => (e.outTs || c.now) > from && e.inTs < to).map(e => {
+    const a = Math.max(e.inTs, from), b = Math.min(e.outTs || c.now, to);
+    return '<span style="position:absolute;left:' + ((a - from) / (to - from) * 100) + '%;width:' + Math.max((b - a) / (to - from) * 100, 1) + '%;top:0;height:8px;border-radius:3px;background:' + mgColor(e.mg) + '"></span>';
   }).join('');
-  return '<div class="lvl-plot"><div class="lvl-y">' + yLabels + '</div>' +
-    '<div class="lvl-area">' + s + bandLabels + '<div class="lvl-mark" id="lvlMark"></div></div></div>' +
+  const span5 = (to - from) / 4;
+  const xLabels = [0, 1, 2, 3, 4].map(k => k === 2 ? '<span style="color:var(--text)">Now</span>' : '<span>' + fmtTime(from + k * span5) + '</span>').join('');
+  const zooms = [6, 12, 24].map(z => '<button class="' + (ui.zoom === z ? 'on' : '') + '" data-act="zoom" data-z="' + z + '">' + z + ' h</button>').join('');
+  const key = (style, label) => '<span style="display:inline-flex;align-items:center;gap:6px"><span style="' + style + '"></span>' + label + '</span>';
+  return '<div class="segment" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">' + zooms + '</div>' +
+    '<div class="lvl-plot"><div class="lvl-y">' + yLabels + '</div><div class="lvl-area">' + s + '<div class="lvl-mark" id="lvlMark"></div></div></div>' +
     '<div class="lvl-under"><div style="position:relative;height:8px;margin-top:6px">' + marks + '</div>' +
-    '<div class="axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>' +
-    '<div class="small" style="margin-top:4px">ng/mL, blood in the arm. Tap or drag the chart to read any time.</div></div>';
+    '<div class="axis">' + xLabels + '</div>' +
+    '<div class="small" style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px">' +
+    (chart.usual ? key('width:14px;border-top:2px dashed #8B9099', 'Your usual') : '') +
+    key('width:12px;height:10px;border-radius:2px;background:rgba(245,160,74,0.35)', 'Craving likely returns') +
+    key('width:12px;height:10px;border-radius:2px;background:rgba(120,140,255,0.3)', '4 h before bed') + '</div>' +
+    '<div class="small" style="margin-top:6px">Nanograms of nicotine per millilitre of blood, in the arm. Tap or drag to read any time.</div></div>';
+}
+
+// Each part of the body: its state now, its next change on your curve, why, what you
+// might notice, and the source. Evidence: workspace shared/research/.
+function bodySystems(c, cur, base) {
+  const last = entries.at(-1), lastIn = last ? last.inTs : null;
+  const bed = bedtimeTs(c), ahead = levelSeries(base, c.now, Math.max(bed, c.now + 6 * HOUR) + HOUR, c.now, settings);
+  const at = t => (ahead.find(p => p[0] >= t) || ahead.at(-1))[1];
+  const halfBy = (ahead.find(p => p[0] > c.now && p[1] <= cur / 2) || [null])[0];
+  const amber = 'var(--warn)', green = 'var(--accent)', grey = '#5A5F66', plain = 'var(--soft)';
+  const rec = Math.round(receptorShare(cur) * 100);
+
+  let brainNow, brainNext, brainDot = amber;
+  if (!lastIn || c.now - lastIn > DAY) { brainNow = 'No pouch in the last day.'; brainNext = 'Cravings pass with or without a pouch'; brainDot = grey; }
+  else {
+    const ph = cravingPhase(lastIn, c.now), back = t => fmtTime(lastIn + t * MIN);
+    brainNow = cur < 0.5 ? 'Close to no nicotine, and few receptors filled.' : 'About ' + rec + '% of your main nicotine receptors are filled' + (c.active ? ', with a pouch in.' : ', and your level is falling.');
+    brainNext = ph === 'easing' ? 'Craving easing now; lowest from about ' + back(CRAVING.lowestFrom)
+      : ph === 'lowest' ? 'Craving at its lowest; likely back from about ' + back(CRAVING.backFrom) + ' to ' + back(CRAVING.backTo)
+      : ph === 'fading' ? 'Craving likely back from about ' + back(CRAVING.backFrom) + ' to ' + back(CRAVING.backTo)
+      : c.active ? 'This pouch went in at ' + fmtTime(lastIn) + '. Studies took pouches out by about 30 minutes, so how a longer one feels is not known'
+      : 'Craving has likely come back: your last pouch went in at ' + fmtTime(lastIn);
+    if (ph === 'easing' || ph === 'lowest') brainDot = green;
+  }
+  const lateFrom = bed - 4 * HOUR;
+  return [
+    { id: 'brain', name: 'Brain and mood', dot: brainDot, now: brainNow, next: brainNext, nextColor: brainDot === green ? plain : amber,
+      why: 'A pouch eases craving within 5 to 15 minutes, most at 15 to 40 minutes. As your level falls from its peak, craving returns, usually 60 to 90 minutes after the pouch went in; for some people up to 2 hours. No blood level marks the moment. Regular use has grown extra nicotine receptors, which is part of why the drop is felt.',
+      notice: 'Thinking about a pouch, then possibly restlessness, irritability and poorer focus. It peaks and passes, with or without a pouch.',
+      src: 'Keller-Hamilton 2024, 2025; Hansson 2019; Hendricks 2006 (smokers); Mamede 2007' },
+    { id: 'heart', name: 'Heart and blood vessels', dot: cur >= 0.5 ? amber : grey,
+      now: cur < 0.5 ? 'No nicotine effect to speak of.' : cur < LOW_NGML ? 'Your level is low, so any rise in heart rate and blood pressure is small.' : 'Heart rate and blood pressure are raised while your level is up.',
+      next: cur < 0.5 ? 'Nothing to change' : halfBy ? 'Follows your level: half of now by about ' + fmtTime(halfBy) + (c.active ? ' after this pouch' : ' if you take no more') : 'Follows your level', nextColor: plain,
+      why: 'Nicotine releases adrenaline, which speeds the heart and narrows blood vessels. The first pouch of the day has the biggest effect; tolerance builds through the day and largely resets overnight.',
+      notice: 'A slightly faster pulse: about +5 to +15 beats a minute after your first pouch, less after later ones. Blood pressure about +5 to +10 mmHg. If you have heart disease or high blood pressure, talk to your GP.',
+      src: 'Wolk 2005; Antoniewicz 2018; Mallock-Ohnesorg 2024; Benowitz 2010' },
+    { id: 'sleep', name: 'Sleep', dot: (c.now >= bed ? cur : at(bed)) >= 0.5 ? amber : green,
+      now: c.now >= bed ? 'Past your ' + settings.bedTime + ' bedtime: about ' + fmtNg(cur) + ' ng/mL now.' : 'Tonight at ' + settings.bedTime + ': about ' + at(bed).toFixed(1) + ' ng/mL if you take no more.',
+      next: c.now >= bed ? 'Each pouch now adds to what you take to bed' : c.now >= lateFrom ? 'You are in the 4 hours before bed now' : 'A pouch after ' + fmtTime(lateFrom) + ' lands in the 4 hours before bed', nextColor: '#9AA6FF',
+      why: 'Nicotine is a stimulant. In a study of smokers, nicotine within 4 hours of bed was linked to more waking in the night. Total sleep time did not change.',
+      notice: 'Waking more in the night rather than sleeping less overall. Bedtime is set in Profile.',
+      src: 'Spadola 2019 (smokers)' },
+    { id: 'appetite', name: 'Appetite and gut', dot: grey,
+      now: 'A pouch does not reliably lower hunger. Energy use is up about 3 to 6% while your level is up: a few calories per pouch.',
+      next: 'No short-term change to blood sugar at these levels', nextColor: plain,
+      why: 'Nicotine slightly speeds metabolism for 30 minutes to 2 hours after a dose. Lab studies did not find lower hunger after nicotine, and gum did not slow the stomach.',
+      notice: 'Probably nothing from one pouch. When you cut down or stop: hunger often rises in the first days, people who stopped snus or pouches gained about 1.8 kg in 4 weeks, and about 1 in 6 get constipated, worst around week 2. With diabetes, take advice from your GP.',
+      src: 'Perkins (review); Jessen 2003; Hughes 1991; af Geijerstam 2025; Hajek 2003 (smokers)' },
+    { id: 'exercise', name: 'Exercise', dot: grey,
+      now: 'If you train now, your level is about ' + fmtNg(cur) + ' ng/mL.',
+      next: 'No performance gain to plan around', nextColor: plain,
+      why: 'Studies of endurance, sprint and strength work found no reliable benefit from nicotine. None tested pouches.',
+      notice: 'Resting heart rate a little higher. Feeling sick during exercise is common in new users and rarer in regular users.',
+      src: 'Mündel 2017, 2019; Zandonai 2016' },
+    { id: 'mouth', name: 'Mouth', dot: grey,
+      now: c.active ? 'A pouch is in now.' : last && last.outTs ? 'Your last pouch came out at ' + fmtTime(last.outTs) + '.' : 'No pouch logged yet.',
+      next: 'Next pouch: a different spot from the last', nextColor: plain,
+      why: 'Marks in the mouth sit where the pouch is held. Of snus users who switched to ZYN, 70% still had one after 6 weeks.',
+      notice: 'A pale or wrinkled patch where the pouch usually sits.',
+      src: 'Alizadehgharib 2022' }
+  ];
 }
 
 function viewNicotine(c) {
-  const from = c.today, to = addDays(c.today, 1);
-  const base = projected(c);
-  chart = { from, to: to - STEP_MIN * MIN, now: c.now, pouchIn: !!c.active, usual: usualLevel(entries, settings, c.now),
+  const half = ui.zoom * 30 * MIN, from = c.now - half, to = c.now + half;
+  const base = projected(c), last = entries.at(-1);
+  chart = { from, now: c.now, pouchIn: !!c.active, lastIn: last && c.now - last.inTs < DAY ? last.inTs : null,
+    usual: usualLevel(entries, settings, c.now),
     mid: levelSeries(base, from, to, c.now, settings),
     lo: levelSeries(base, from, to, c.now, settings, 'low'),
     hi: levelSeries(base, from, to, c.now, settings, 'high') };
   chart.to = chart.mid.at(-1)[0];
-  const series = chart.mid;
-  const p = c.usual, dur = c.usualMin * MIN;
-  const last = [...entries].reverse().find(e => e.outTs);
-  const waitAt = c.plan && last ? Math.max(c.now, last.outTs + c.plan.targets.gap * MIN) : c.now + 2 * HOUR;
-  const startAt = c.active ? Math.max(c.now, c.active.inTs + dur) : c.now;
-  const extraEntry = { now: { inTs: startAt, outTs: startAt + dur, mg: p.mg }, wait: { inTs: waitAt, outTs: waitAt + dur, mg: p.mg } }[ui.scenario];
-  const extra = extraEntry ? levelSeries(base.concat([extraEntry]), from, to, c.now, settings).filter(x => x[0] >= c.now) : [];
-  const lowAt = s => { const f = s.find(x => x[0] > c.now && x[1] < LOW_NGML && (!extraEntry || x[0] > extraEntry.outTs)); return f ? 'at about ' + fmtTime(f[0]) : 'after midnight'; };
-  const text = {
-    none: 'No more today: your estimate falls below ' + LOW_NGML + ' ng/mL, under the nicotine gum range, ' + lowAt(series) + '.',
-    now: 'One more ' + (c.active ? 'straight after this one' : 'now') + ': the level stays up, and drops below ' + LOW_NGML + ' ng/mL ' + lowAt(extra) + '.',
-    wait: 'Waiting until ' + fmtTime(waitAt) + ' lets your level fall first. It drops below ' + LOW_NGML + ' ng/mL ' + lowAt(extra) + '.'
-  }[ui.scenario];
-  const past = series.filter(x => x[0] <= c.now);
-  const peakPt = past.reduce((m, x) => x[1] > m[1] ? x : m, [c.now, 0]);
-  const seg = [['none', 'No more'], ['now', 'One now'], ['wait', 'Wait']].map(s => '<button class="' + (ui.scenario === s[0] ? 'on' : '') + '" data-act="scenario" data-s="' + s[0] + '">' + s[1] + '</button>').join('');
-  const stat = (l, v, s) => '<div class="card" style="padding:12px 14px"><div class="label">' + l + '</div><div class="num" style="font-size:20px;margin-top:4px">' + v + '</div><div class="small">' + s + '</div></div>';
-  const gaps = c.todayStats.gaps;
-  const ts = ui.readTs !== null && ui.readTs >= chart.from && ui.readTs <= chart.to ? ui.readTs : c.now;
   const cur = levelNow(base, c.now, 'mid');
-  const receptors = cur < 0.5 ? 'With almost no nicotine in your blood, few receptors are filled.'
-    : 'At about ' + fmtNg(cur) + ' ng/mL now, roughly ' + Math.round(receptorShare(cur) * 100) + '% of the brain\'s main nicotine receptors are filled. Even low levels fill most of them, so a lower blood peak does not mean a smaller effect on the brain.';
-  const effect = (title, text, src) => '<div class="list-row" style="display:block"><div style="font-size:14px;font-weight:700">' + title + '</div>' +
-    '<div class="body" style="color:var(--soft);margin-top:2px">' + esc(text) + '</div><div class="small" style="margin-top:2px">' + src + '</div></div>';
-  const effects = '<div class="label" style="margin-top:4px">What this level does</div><div class="list">' +
-    effect('Heart rate', 'About +5 to +15 beats a minute from the first pouch of the day, starting within 5 minutes. Later pouches usually raise it less, and the sensitivity largely returns overnight.', 'Wolk 2005; Antoniewicz 2018; Mallock-Ohnesorg 2024; Benowitz 2010') +
-    effect('Blood pressure', 'About +5 to +10 mmHg. Adrenaline rises too, by about half in one snuff study.', 'Wolk 2005; Antoniewicz 2018') +
-    effect('How long', 'While your level is up, often past the time the pouch is out.', 'Antoniewicz 2018') +
-    effect('Brain', receptors, 'Brody 2006, a smoker study; an estimate') +
-    '</div><div class="small" style="padding:0 4px">Information, not medical advice. If you have heart disease or high blood pressure, talk to your GP. <a href="#learn" style="color:var(--accent);font-weight:700">Learn more</a></div>';
+  const ts = ui.readTs !== null && ui.readTs >= chart.from && ui.readTs <= chart.to ? ui.readTs : c.now;
+  const systems = bodySystems(c, cur, base).map(s => {
+    const open = ui.bodyOpen === s.id;
+    return '<div class="card" style="padding:0"><button class="list-row" style="border:0;width:100%;display:flex;gap:12px;align-items:flex-start;text-align:left;padding:12px 14px" data-act="bodySys" data-id="' + s.id + '" aria-expanded="' + open + '">' +
+      '<span style="width:10px;height:10px;border-radius:5px;margin-top:5px;flex:none;background:' + s.dot + '"></span>' +
+      '<span style="flex:1;display:flex;flex-direction:column;gap:3px"><span style="font-size:14px;font-weight:800">' + s.name + '</span>' +
+      '<span class="body" style="color:var(--soft)">' + esc(s.now) + '</span>' +
+      '<span style="font-size:12px;font-weight:700;color:' + s.nextColor + '">' + esc(s.next) + '</span></span>' +
+      '<span class="small">' + (open ? 'Close' : 'Open') + '</span></button>' +
+      (open ? '<div style="padding:0 14px 14px 36px;display:flex;flex-direction:column;gap:10px">' +
+        '<div><div class="label">Why</div><div class="body" style="color:var(--soft);margin-top:2px">' + esc(s.why) + '</div></div>' +
+        '<div><div class="label">What you might notice</div><div class="body" style="color:var(--soft);margin-top:2px">' + esc(s.notice) + '</div></div>' +
+        '<div class="small">' + esc(s.src) + '</div></div>' : '') + '</div>';
+  }).join('');
   const weightLine = settings.weightKg ? 'It uses your weight, ' + settings.weightKg + ' kg. ' : 'It uses ' + DEFAULT_WEIGHT_KG + ' kg until you set your weight in Profile. ';
-  return header('Nicotine in you', fmtDay(c.now) + ' · estimate', 'now') +
-    '<div class="card"><div id="lvlRead">' + readingHtml(ts) + '</div><div style="margin-top:14px">' + levelChart(c, extra) + '</div></div>' +
-    effects +
-    '<div class="label" style="margin-top:4px">What if</div><div class="segment" style="grid-template-columns:repeat(3,1fr)">' + seg + '</div>' +
-    '<div class="body" style="color:var(--soft)">' + esc(text) + '</div>' +
-    '<div class="grid2">' +
-    stat('Peak today', peakPt[1] > 0 ? fmtNg(peakPt[1]) + ' ng/mL' : '–', peakPt[1] > 0 ? 'At ' + fmtTime(peakPt[0]) : 'Highest estimate so far') +
-    stat('Below ' + LOW_NGML + ' ng/mL', fmtMin(hoursBelow(past, LOW_NGML) * 60), 'Today so far') +
-    stat('Overnight', fmtMin(overnightLow(entries, settings, c.today, c.now) * 60), 'Below ' + LOW_NGML + ' ng/mL, last night') +
-    stat('Longest gap', gaps.length ? fmtMin(Math.max(...gaps)) : '–', c.plan ? 'Target ' + fmtMin(c.plan.targets.gap) : 'Today') +
-    '</div><div class="card dashed"><div class="strong" style="font-size:13px">How this is worked out</div><div class="small" style="margin-top:6px">' +
+  return header('Your body, now and next', fmtDay(c.now) + ' · estimate', 'now') +
+    '<div class="card"><div id="lvlRead">' + readingHtml(ts) + '</div><div style="margin-top:14px">' + levelChart(c) + '</div></div>' +
+    '<div class="label" style="margin-top:4px">Your body</div>' + systems +
+    '<a class="card coach" href="#whatif"><div class="row"><div><div class="strong">Thinking about another?</div><div class="small" style="margin-top:2px">See what one now, waiting or none would change</div></div><span style="font-size:13px;font-weight:800;color:var(--warn)">What if</span></div></a>' +
+    '<div class="card dashed"><div class="strong" style="font-size:13px">How this is worked out</div><div class="small" style="margin-top:6px">' +
     'Each pouch releases nicotine at the rate measured in studies of similar pouches: ZYN 6 mg (Lunell 2020) and Velo 11 mg (Azzopardi 2026). Pouches of 10 mg and over use the 11 mg rate. ' +
     'Nearly all released nicotine enters the blood through the mouth. It spreads through about 2.6 litres for each kg of body weight and halves about every 2 hours (Benowitz, Hukkanen and Jacob 2009). ' + weightLine +
-    'The likely range allows for slower or faster release, uptake and clearance. The shaded ranges are the steady daily levels of nicotine gum users (5 to 15 ng/mL) and daily smokers (10 to 50 ng/mL) (Benowitz 2009). ' +
-    'The studies measured one pouch at a time, so your level may differ by half or double. An estimate, not a measurement or medical advice.</div></div>';
+    'Your usual is your average between 08:00 and 22:00 over the last 7 days with a pouch. The faint ranges are nicotine gum users (5 to 15 ng/mL) and daily smokers (10 to 50) (Benowitz 2009). ' +
+    'The studies measured one pouch at a time, mostly after a night without, so your level may differ by half or double. Information, not medical advice. <a href="#learn" style="color:var(--accent);font-weight:700">Learn more</a></div></div>';
+}
+
+// ---- What if ----
+
+// No more, one now, or wait: what each changes for the rest of today, system by system.
+function viewWhatIf(c) {
+  const p = c.usual, dur = c.usualMin * MIN, base = projected(c), last = entries.at(-1);
+  // Past bedtime, compare the level 30 minutes from now instead.
+  const pastBed = c.now >= bedtimeTs(c), bed = pastBed ? c.now + 30 * MIN : bedtimeTs(c), to = Math.max(bed, c.now + 4 * HOUR) + HOUR;
+  const bedLabel = pastBed ? 'In 30 minutes' : 'At ' + settings.bedTime;
+  const startNow = c.active ? Math.max(c.now, c.active.inTs + dur) : c.now;
+  const lastOut = c.active ? startNow : last && last.outTs ? last.outTs : c.now;
+  const gap = c.plan ? c.plan.targets.gap : 120;
+  const waitAt = Math.max(startNow + 30 * MIN, lastOut + gap * MIN);
+  const extra = { none: null, now: { inTs: startNow, outTs: startNow + dur, mg: p.mg }, wait: { inTs: waitAt, outTs: waitAt + dur, mg: p.mg } };
+  const usual = usualLevel(entries, settings, c.now);
+  const target = c.plan ? (c.plan.mode === 'count' ? c.plan.targets.count : c.plan.targets.mg) : null;
+  const F = {};
+  for (const k of ['none', 'now', 'wait']) {
+    const e = extra[k], s = levelSeries(e ? base.concat([e]) : base, c.now, to, c.now, settings);
+    const at = t => (s.find(q => q[0] >= t) || s.at(-1))[1];
+    const start = e ? e.inTs : last ? last.inTs : null;
+    F[k] = { e, s, bed: at(bed), peak: Math.max(...s.filter(q => q[0] <= bed).map(q => q[1]), 0),
+      backFrom: start ? start + CRAVING.backFrom * MIN : null, backTo: start ? start + CRAVING.backTo * MIN : null,
+      late: !!e && e.inTs > bed - 4 * HOUR,
+      count: c.todayStats.count + (e ? 1 : 0), mg: c.todayStats.mg + (e ? p.mg : 0) };
+  }
+  const k = ui.pick, f = F[k], n = F.none;
+  const labels = { none: 'No more today', now: c.active ? 'One straight after' : 'One now', wait: 'Wait until ' + fmtTime(waitAt) };
+  const opts = ['none', 'now', 'wait'].map(o => '<button class="' + (k === o ? 'on' : '') + '" data-act="pick" data-k="' + o + '" style="min-height:48px">' + labels[o] + '</button>').join('');
+
+  // Curves for the rest of today: your choice solid, no more dashed.
+  const W = 300, H = 120, top = chartTop(Math.max(15, usual || 0, ...F.now.s.map(q => q[1]), ...F.wait.s.map(q => q[1])));
+  const x = t => ((t - c.now) / (to - c.now) * W).toFixed(1), y = v => (H - Math.min(v, top) / top * H).toFixed(1);
+  const path = pts => pts.map((q, i) => (i ? 'L' : 'M') + x(q[0]) + ' ' + y(q[1])).join(' ');
+  const svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block;width:100%;height:' + H + 'px" aria-hidden="true">' +
+    '<rect y="0" height="' + H + '" x="' + x(bed - 4 * HOUR) + '" width="' + (x(bed) - x(bed - 4 * HOUR)) + '" fill="rgba(120,140,255,0.12)"/>' +
+    (usual ? '<line x1="0" x2="' + W + '" y1="' + y(usual) + '" y2="' + y(usual) + '" stroke="#8B9099" stroke-dasharray="2 4" vector-effect="non-scaling-stroke"/>' : '') +
+    '<path d="' + path(n.s) + '" fill="none" stroke="#5EE0B0" stroke-width="2" stroke-dasharray="4 4" opacity="0.7" vector-effect="non-scaling-stroke"/>' +
+    (k === 'none' ? '' : '<path d="' + path(f.s) + '" fill="none" stroke="#F5A04A" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>') + '</svg>';
+  const span4 = (to - c.now) / 3;
+  const axis = '<div class="axis"><span style="color:var(--text)">Now</span><span>' + fmtTime(c.now + span4) + '</span><span>' + fmtTime(c.now + 2 * span4) + '</span><span>' + fmtTime(to) + '</span></div>';
+
+  const amber = 'var(--warn)', green = 'var(--accent)', soft = 'var(--soft)';
+  const brain = !f.e
+    ? { tag: 'Ride it out', c: amber, text: n.backFrom ? (c.now >= n.backFrom ? 'Craving has likely come back: it usually returns 60 to 90 minutes after a pouch goes in, and yours went in at ' + fmtTime(last.inTs) + '.' : 'Craving likely back from about ' + fmtTime(n.backFrom) + ' to ' + fmtTime(n.backTo) + '.') + ' It peaks and passes, with or without a pouch.' : 'Cravings pass with or without a pouch.' }
+    : k === 'now'
+    ? { tag: 'Relief, then again', c: amber, text: 'Craving eases within 5 to 15 minutes, lowest around ' + fmtTime(f.e.inTs + 15 * MIN) + ' to ' + fmtTime(f.e.inTs + 40 * MIN) + '. It is likely back from about ' + fmtTime(f.backFrom) + ' to ' + fmtTime(f.backTo) + '.' }
+    : { tag: 'Ride out to ' + fmtTime(waitAt), c: amber, text: 'Ride out this craving until ' + fmtTime(waitAt) + '. That pouch eases it within 15 minutes; it is likely back from about ' + fmtTime(f.backFrom) + ' to ' + fmtTime(f.backTo) + '.' };
+  const heart = !f.e
+    ? { tag: 'Easing', c: green, text: 'Heart rate and blood pressure ease as your level falls.' }
+    : { tag: 'Up again', c: amber, text: 'Raised again from ' + fmtTime(f.e.inTs) + '. Usually a smaller rise than your first pouch of the day.' };
+  const sleep = { tag: f.bed.toFixed(1) + ' ng/mL', c: f.bed > n.bed + 0.5 ? amber : green,
+    text: bedLabel + ': about ' + f.bed.toFixed(1) + ' ng/mL, ' + Math.round(receptorShare(f.bed) * 100) + '% of receptors filled' + (!f.e ? '.' : ', against ' + n.bed.toFixed(1) + ' with no more.') + (f.late ? ' This pouch falls in the 4 hours before bed.' : '') };
+  const unit = c.plan && c.plan.mode === 'strength' ? ' mg' : '';
+  const used = c.plan && c.plan.mode === 'strength' ? f.mg : f.count;
+  const day = { tag: target !== null ? used + unit + ' of ' + target + unit : f.count + ' today', c: target !== null && used > target ? amber : green,
+    text: f.count + ' pouch' + (f.count === 1 ? '' : 'es') + ' and ' + f.mg + ' mg today' + (target !== null ? ', against a plan of ' + target + unit + ' a day.' : '. Your plan starts after the baseline week.') + (f.e && pricePerPouch(p) ? ' This one costs about ' + fmtMoney(pricePerPouch(p)) + '.' : '') };
+  const peak = { tag: fmtNg(f.peak) + ' ng/mL', c: usual && f.peak > usual * 1.15 ? amber : soft,
+    text: !usual ? 'Highest level for the rest of today.' : f.peak > usual * 1.15 ? 'Above your usual daytime level of ' + fmtNg(usual) + ' ng/mL.' : 'At or below your usual daytime level of ' + fmtNg(usual) + ' ng/mL.' };
+  const rows = [
+    ['Brain and mood', brain], ['Heart and blood vessels', heart], ['Sleep tonight', sleep],
+    ['Appetite and gut', { tag: 'No change', c: soft, text: 'A pouch does not reliably lower hunger, and blood sugar does not change at these levels. Energy use rises 3 to 6% for a while: a few calories.' }],
+    ['Peak for the rest of today', peak], ['Today and the plan', day]
+  ].map(r => '<div class="list-row" style="display:block"><div class="row"><div style="font-size:14px;font-weight:800">' + r[0] + '</div><div style="font-size:12px;font-weight:800;color:' + r[1].c + '">' + esc(r[1].tag) + '</div></div>' +
+    '<div class="body" style="color:var(--soft);margin-top:3px">' + esc(r[1].text) + '</div></div>').join('');
+
+  // No more is best for sleep and the plan. If the craving is strong, waiting beats one
+  // now for the gap, but a later pouch leaves more in you at bedtime: say both.
+  const under = target !== null ? target - (c.plan.mode === 'strength' ? n.mg : n.count) : null;
+  const sugWhy = 'You go to bed at about ' + n.bed.toFixed(1) + ' ng/mL' + (under > 0 ? ', ' + under + (unit || '') + ' under your plan' : '') + '. If the craving is strong, waiting until ' + fmtTime(waitAt) + ' beats one now for the gap: you ride this one out first.' +
+    (F.wait.bed > F.now.bed + 0.1 ? ' The trade-off is sleep: a later pouch leaves about ' + F.wait.bed.toFixed(1) + ' ng/mL at bedtime, against ' + F.now.bed.toFixed(1) + ' for one now.' : '');
+  return header('What if', fmtTime(c.now) + (last ? ' · last pouch in at ' + fmtTime(last.inTs) : '') + ' · about ' + fmtNg(levelNow(base, c.now, 'mid')) + ' ng/mL now', 'nicotine') +
+    '<div class="segment" style="grid-template-columns:repeat(3,1fr)">' + opts + '</div>' +
+    '<div class="card">' + svg + axis + '<div class="small" style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px">' +
+    (k === 'none' ? '' : '<span>Solid: ' + labels[k].toLowerCase() + '</span>') + '<span>Dashed green: no more</span>' + (usual ? '<span>Dashed grey: your usual</span>' : '') + '<span>Blue: 4 h before bed</span></div></div>' +
+    '<div class="card coach"><div class="label accent">Suggestion</div><div class="strong" style="font-size:16px;margin-top:6px;line-height:1.35">If you can, no more today.</div><div class="body" style="color:var(--soft);margin-top:6px">' + esc(sugWhy) + '</div></div>' +
+    '<div class="label" style="margin-top:4px">What changes · ' + esc(labels[k]) + '</div><div class="list">' + rows + '</div>' +
+    '<div class="small" style="padding:0 4px">Each choice is your usual pouch, ' + esc(p.name) + ', for ' + c.usualMin + ' minutes. Estimates from your log and peer-reviewed studies, mostly of smokers and snus users. Information, not medical advice.</div>';
 }
 
 // ---- Learn ----
@@ -917,7 +1047,9 @@ const actions = {
   planMode(t) { settings.plan.mode = t.dataset.m; persist(); render(); },
   planWeeks(t) { settings.plan.weeks = Number(t.dataset.w); persist(); render(); },
   range(t) { ui.range = t.dataset.r; render(); },
-  scenario(t) { ui.scenario = t.dataset.s; render(); },
+  zoom(t) { ui.zoom = Number(t.dataset.z); ui.readTs = null; render(); },
+  bodySys(t) { ui.bodyOpen = ui.bodyOpen === t.dataset.id ? null : t.dataset.id; render(); },
+  pick(t) { ui.pick = t.dataset.k; render(); },
   scorePart(t) { const i = Number(t.dataset.i); ui.scoreOpen = ui.scoreOpen === i ? -1 : i; render(); },
   phase(t) { const i = Number(t.dataset.i); ui.phaseOpen = ui.phaseOpen === i ? -1 : i; render(); },
   learnTopic(t) { ui.learnOpen = ui.learnOpen === t.dataset.id ? null : t.dataset.id; render(); },
@@ -1046,7 +1178,7 @@ function backupCard(c) {
 
 // ---- Rendering ----
 
-const VIEWS = { now: viewNow, plan: viewPlan, history: viewHistory, profile: viewProfile, nicotine: viewNicotine, score: viewScore, learn: viewLearn };
+const VIEWS = { now: viewNow, plan: viewPlan, history: viewHistory, profile: viewProfile, nicotine: viewNicotine, score: viewScore, learn: viewLearn, whatif: viewWhatIf };
 
 function route() { const r = location.hash.slice(1); return VIEWS[r] ? r : 'now'; }
 

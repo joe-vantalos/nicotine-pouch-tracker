@@ -255,6 +255,22 @@ function usualLevel(entries, settings, now) {
   return usualCache.value;
 }
 
+// ---- Craving timing ----
+// After a pouch goes in, craving eases within 5-15 min and is lowest at 15-40 min. It
+// usually returns 60-90 min after the pouch went in, for some people up to 120 min.
+// No blood level marks the moment. Keller-Hamilton 2024, 2025; Hansson 2019 (workspace
+// shared/research/withdrawal-timing-oral.md).
+const CRAVING = { lowestFrom: 15, lowestTo: 40, backFrom: 60, backTo: 90, backLate: 120 };
+
+// Where you are in that pattern after the pouch that went in at `inTs`.
+function cravingPhase(inTs, now) {
+  const m = (now - inTs) / MIN;
+  if (m < CRAVING.lowestFrom) return 'easing';
+  if (m < CRAVING.lowestTo) return 'lowest';
+  if (m < CRAVING.backFrom) return 'fading';
+  return 'back';
+}
+
 // A pouch that went in while another was in, or within an hour of the last coming
 // out. Most of the last one is still in the blood (2 h half-life), so the dose adds.
 function doubledUp(entries, active) {
