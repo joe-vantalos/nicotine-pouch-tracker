@@ -4,10 +4,6 @@
 const STORAGE_KEY = 'pouchTracker.entries.v1';
 const SETTINGS_KEY = 'pouchTracker.settings.v1';
 const CRAVINGS_KEY = 'pouchTracker.cravings.v1';
-const MIGRATED_KEY = 'pouchTracker.migratedFromSheet';
-
-// Legacy Google Sheets endpoint. Only used to migrate old data into local storage.
-const SHEET_URL = 'https://script.google.com/macros/s/AKfycbxA6lB0MpILO2_nP2Bppv4TUv7V939vQ1zbkdW73tYkDpLMNwS4tx--hnhPJuKGfzSXEw/exec';
 
 function readJSON(key, fallback) {
   const raw = localStorage.getItem(key);
@@ -24,12 +20,10 @@ const store = {
     return Array.isArray(list) ? list.filter(c => c && typeof c.ts === 'number') : [];
   },
   saveCravings(list) { localStorage.setItem(CRAVINGS_KEY, JSON.stringify(list)); },
-  isMigrated() { return localStorage.getItem(MIGRATED_KEY) === '1'; },
-  setMigrated() { localStorage.setItem(MIGRATED_KEY, '1'); },
 };
 
-// Accepts rows from local storage, a backup file, or the Google Sheet
-// (which returns dates as strings) and returns clean, sorted entries.
+// Accepts rows from local storage or a backup file (dates may be strings)
+// and returns clean, sorted entries.
 // Each entry is { inTs, outTs, mg } plus optional productId and tag. The older
 // version of the app reads the same three core fields, so data stays compatible.
 function normalize(rows) {
@@ -58,6 +52,31 @@ function mergeEntries(current, incoming) {
   return { list: [...byIn.values()].sort((a, b) => a.inTs - b.inTs), added };
 }
 
+// A backup file holds everything: { app, v: 2, exportedTs, entries, settings, cravings }.
+// Older backups are a plain list of entries; both are accepted on import.
+function backupFile(entries, settings, cravings) {
+  return { app: 'pouch-tracker', v: 2, exportedTs: Date.now(), entries, settings, cravings };
+}
+
+function readBackup(data) {
+  if (Array.isArray(data)) return { entries: normalize(data), settings: null, cravings: [], exportedTs: null };
+  if (!data || data.app !== 'pouch-tracker' || !Array.isArray(data.entries)) throw new Error('not a Pouch Tracker backup');
+  const cravings = Array.isArray(data.cravings) ? data.cravings.filter(c => c && typeof c.ts === 'number') : [];
+  return { entries: normalize(data.entries), settings: data.settings || null, cravings, exportedTs: typeof data.exportedTs === 'number' ? data.exportedTs : null };
+}
+
+// Merges a backup's settings into the current ones. A device with no entries yet
+// (a new phone) takes the backup's settings whole. Otherwise products the device
+// lacks are added, and the plan is taken only if this device has not started one.
+function mergeSettings(current, incoming, deviceEmpty) {
+  if (!incoming) return current;
+  if (deviceEmpty) return incoming;
+  const out = { ...current, products: [...current.products] };
+  (incoming.products || []).forEach(p => { if (p && p.id && !out.products.some(q => q.id === p.id)) out.products.push(p); });
+  if (!current.plan.startTs && incoming.plan && typeof incoming.plan.startTs === 'number') out.plan = { ...incoming.plan };
+  return out;
+}
+
 // Fills in any missing settings. Every strength already logged gets a product,
 // so old entries without a productId still resolve to one.
 function withDefaults(s, entries) {
@@ -75,7 +94,9 @@ function withDefaults(s, entries) {
     },
     checkins: s.checkins !== false,
     confirmations: Array.isArray(s.confirmations) ? s.confirmations : [],
-    stillInDismissed: typeof s.stillInDismissed === 'number' ? s.stillInDismissed : null
+    stillInDismissed: typeof s.stillInDismissed === 'number' ? s.stillInDismissed : null,
+    lastBackupTs: typeof s.lastBackupTs === 'number' ? s.lastBackupTs : null,
+    backupSnoozeTs: typeof s.backupSnoozeTs === 'number' ? s.backupSnoozeTs : null
   };
   const mgs = [...new Set(entries.map(e => e.mg))];
   if (!mgs.length && !out.products.length) mgs.push(6, 11);

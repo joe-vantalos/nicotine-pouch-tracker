@@ -118,7 +118,7 @@ function viewNow(c) {
   if (c.after) return viewAftercare(c);
   const sub = fmtDay(c.now) + ' · ' + fmtTime(c.now) + ' · ' +
     (c.plan ? 'Plan week ' + c.plan.week : c.base.complete ? 'Baseline ready' : 'Baseline day ' + c.base.day + ' of 7');
-  return header('Today', sub) + weekStrip(c) + pouchCard(c) + (c.plan ? '' : baselineCard(c)) + nicotineCard(c) +
+  return header('Today', sub) + backupCard(c) + weekStrip(c) + pouchCard(c) + (c.plan ? '' : baselineCard(c)) + nicotineCard(c) +
     (c.plan ? scoreAndPlanCards(c) + coachCard(c) : '') +
     '<div class="row" style="margin-top:4px"><div class="label">Today\'s log</div><div class="small">' +
     (c.todayStats.gaps.length ? 'Longest gap ' + fmtMin(Math.max(...c.todayStats.gaps)) : '') +
@@ -471,8 +471,7 @@ function viewProfile(c) {
     '<div class="label" style="margin-top:6px">Products and tins</div><div class="list">' + products + '</div>' +
     '<button class="btn outline full" data-act="openProduct" data-id="">Add a product</button>' +
     '<div class="label" style="margin-top:6px">Data</div><div class="row"><button class="btn outline flex" data-act="export">Export backup</button><button class="btn outline flex" data-act="import">Import backup</button></div>' +
-    '<button class="btn outline full" data-act="sheetImport">Re-import from Google Sheet</button>' +
-    '<div class="small">' + entries.length + ' entries stored on this device' + (first ? ' (since ' + first + ')' : '') + '. Data lives in this browser only. Export a backup regularly.</div>' +
+    '<div class="small">' + entries.length + ' entries stored on this device' + (first ? ' (since ' + first + ')' : '') + '. Data lives in this browser only. Last backup: ' + backupAge(Date.now()) + '.</div>' +
     '<div id="status" class="status' + (statusText.error ? ' error' : '') + '">' + esc(statusText.text) + '</div>';
 }
 
@@ -788,7 +787,7 @@ const actions = {
   phase(t) { const i = Number(t.dataset.i); ui.phaseOpen = ui.phaseOpen === i ? -1 : i; render(); },
   export: exportBackup,
   import() { $importFile.click(); },
-  sheetImport: importFromSheet
+  snoozeBackup() { settings.backupSnoozeTs = Date.now(); persist(); render(); }
 };
 
 function saveCraving(outcome) {
@@ -830,26 +829,47 @@ $importFile.onchange = () => {
   if (file) importBackup(file);
 };
 
-// ---- Backup and migration ----
+// ---- Backup ----
 
-function exportBackup() {
-  const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'pouch-tracker-backup-' + new Date().toISOString().slice(0, 10) + '.json';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  setStatus('backup exported (' + entries.length + ' entries)');
+// On a phone, the share sheet offers "Save to Files" (iCloud Drive). Elsewhere the
+// file downloads. A cancelled share does not count as a backup.
+async function exportBackup() {
+  const name = 'pouch-tracker-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  const json = JSON.stringify(backupFile(entries, settings, cravings), null, 2);
+  const file = new File([json], name, { type: 'application/json' });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'Pouch Tracker backup' });
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(file);
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') { setStatus('backup cancelled'); render(); return; }
+    setStatus('backup failed: ' + errText(e), true); render(); return;
+  }
+  settings.lastBackupTs = Date.now();
+  settings.backupSnoozeTs = null;
+  if (persist()) setStatus('backup saved (' + entries.length + ' entries)');
+  render();
 }
 
 async function importBackup(file) {
   try {
-    const rows = JSON.parse(await file.text());
-    if (!Array.isArray(rows)) throw new Error('file is not a list of entries');
-    const result = mergeEntries(entries, normalize(rows));
+    const b = readBackup(JSON.parse(await file.text()));
+    const deviceEmpty = !entries.length;
+    const result = mergeEntries(entries, b.entries);
     entries = result.list;
+    const seen = new Set(cravings.map(c => c.ts));
+    cravings = [...cravings, ...b.cravings.filter(c => !seen.has(c.ts))].sort((x, y) => x.ts - y.ts);
+    settings = withDefaults(mergeSettings(settings, b.settings, deviceEmpty), entries);
+    // The file itself is a backup, so it counts as one from the day it was saved.
+    if (b.exportedTs && !(settings.lastBackupTs >= b.exportedTs)) settings.lastBackupTs = b.exportedTs;
     if (persist()) setStatus('imported ' + result.added + ' entries from backup');
   } catch (e) {
     setStatus('backup import failed: ' + errText(e), true);
@@ -857,21 +877,27 @@ async function importBackup(file) {
   render();
 }
 
-async function importFromSheet() {
-  setStatus('importing from Google Sheet...');
-  try {
-    const res = await fetch(SHEET_URL + '?t=' + Date.now(), { method: 'GET', cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const rows = await res.json();
-    const result = mergeEntries(entries, normalize(rows));
-    entries = result.list;
-    if (!persist()) return;
-    store.setMigrated();
-    setStatus('imported ' + result.added + ' entries from Google Sheet');
-  } catch (e) {
-    setStatus('sheet import failed: ' + errText(e) + '. Use "Re-import from Google Sheet" in Profile to try again.', true);
-  }
-  render();
+// A backup is due a week after the last one, or a week after the first entry if
+// there has never been one. "Later" hides the prompt for a day.
+function backupDue(now) {
+  if (!entries.length) return false;
+  const since = settings.lastBackupTs || entries[0].inTs;
+  if (now - since < 7 * DAY) return false;
+  return !(settings.backupSnoozeTs && now - settings.backupSnoozeTs < DAY);
+}
+
+function backupAge(now) {
+  if (!settings.lastBackupTs) return 'never';
+  const days = Math.floor((now - settings.lastBackupTs) / DAY);
+  return days === 0 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago';
+}
+
+function backupCard(c) {
+  if (!backupDue(c.now)) return '';
+  return '<div class="card"><div class="label">Backup</div>' +
+    '<div class="strong" style="margin-top:6px">Last backup: ' + backupAge(c.now) + '.</div>' +
+    '<div class="small" style="margin-top:4px">Your data is stored only on this phone. A backup in Files keeps it if the phone is lost or reset.</div>' +
+    '<div class="row" style="margin-top:12px"><button class="btn primary flex" data-act="export">Back up now</button><button class="btn outline flex" data-act="snoozeBackup">Later</button></div></div>';
 }
 
 // ---- Rendering ----
@@ -929,7 +955,6 @@ window.addEventListener('storage', e => {
   // Ask the browser not to evict our data under storage pressure.
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
-  // One-time migration of existing Google Sheet data. Runs in the background;
-  // the app is fully usable while it runs.
-  if (dataLoaded && !store.isMigrated()) importFromSheet();
+  // Keep a copy of the app on the device so it opens offline (see sw.js).
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

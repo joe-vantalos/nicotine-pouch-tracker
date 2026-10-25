@@ -11,6 +11,7 @@ styles.css             All styles; colours are tokens on :root
 store.js               Storage: load, save, normalise, merge, settings defaults
 model.js               Calculations: stats, baseline, plan, nicotine estimate, score, coach, aftercare
 ui.js                  Screens, overlays and actions
+sw.js                  Offline support: keeps a copy of the app on the device
 manifest.webmanifest   Home screen app settings (name, colours, Android icons)
 icons/                 Logo source (logo.svg) and the PNGs rendered from it
 README.md              This file
@@ -53,19 +54,23 @@ Every action saves locally and updates the screen immediately. There are no netw
 calls during normal use. The older version of the app reads the same entries key,
 so data stays compatible in both directions.
 
-### Migration from Google Sheets
+### Backups
 
-The app previously used a Google Apps Script web app as its backend. On the first load
-after the switch, the app fetches all rows from that endpoint once and merges them into
-local storage. The "Re-import from Google Sheet" button in Profile repeats this. Importing is
-merge-only: it never deletes local entries, and running it twice does not create duplicates.
+"Back up now" (on Now, when a backup is due) and "Export backup" (Profile) save one
+file with everything: entries, settings (products, prices, plan) and cravings. On a
+phone this opens the share sheet; choose "Save to Files" to keep it in iCloud Drive.
+A backup is due a week after the last one; "Later" hides the prompt for a day.
+
+"Import backup" merges a file back in and never deletes anything. On a device with
+no entries yet, the backup's settings are taken whole. Older backups (a plain list
+of entries) still import.
 
 ### Limits of local storage
 
 - Data lives in one browser on one device. Phone and laptop do not share data.
 - Clearing site data deletes it. Safari can also delete it if the site is not used for
   7 days, unless the app is added to the home screen.
-- Use "Export backup" regularly. "Import backup" merges a backup file back in.
+- Back up regularly. The app prompts weekly.
 
 ### Future remote backend
 
@@ -77,6 +82,15 @@ added behind it without changing the rest of the app. Free options:
 | Supabase | 500 MB Postgres | Project pauses after 7 days with no requests. |
 | Firebase Firestore | 1 GB, 50k reads / 20k writes per day | Built-in offline cache suits this app. |
 | Cloudflare Workers + D1 | 5 GB, 100k requests per day | Needs a small Worker script. |
+
+## Offline and releases
+
+`sw.js` keeps a copy of the app on the device, so it opens with no signal. The page
+is fetched fresh when online, so a release shows on the next open. Scripts, styles
+and icons are served from the stored copy.
+
+When a release changes `styles.css` or a `.js` file, bump its `?v=` number in both
+`index.html` and the `SHELL` list in `sw.js`. Otherwise phones keep the old file.
 
 ## Logo and icons
 
