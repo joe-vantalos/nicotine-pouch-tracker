@@ -3,15 +3,15 @@
 // - The page itself: fetched fresh when online (waiting at most 2 seconds), so a
 //   new release shows straight away; the stored copy is used offline.
 // - Scripts, styles, icons, font: stored copy first. Their file names carry a
-//   version (ui.js?v=6), so a release that changes a file must bump its ?v=.
+//   version (ui.js?v=8), so a release that changes a file must bump its ?v=.
 const CACHE = 'pouch-tracker-v1';
 const PAGE = './';
 const SHELL = [
   PAGE,
-  'styles.css?v=4',
-  'store.js?v=6',
-  'model.js?v=4',
-  'ui.js?v=6',
+  'styles.css?v=6',
+  'store.js?v=7',
+  'model.js?v=5',
+  'ui.js?v=8',
   'manifest.webmanifest?v=2',
   'icons/logo.svg?v=2',
   'icons/favicon-32.png?v=2',

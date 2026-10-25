@@ -29,15 +29,30 @@ it is stored in the browser on each device (see Storage below).
   After 24 hours with no pouch, Now becomes the aftercare view.
 - **Plan**: steps from the baseline week to zero, by count or by strength.
 - **History**: week or month, trend against the previous period, every day.
-- **Nicotine in you**, **Capacity**, **Profile** (products, tins, wake time, data).
+- **Nicotine in you**, **Capacity**, **Profile** (products, tins, wake time, body weight, data).
 - Overlays: log a pouch (now or earlier), edit or delete an entry, a day's log,
   "Still in?", the check-in ("Have you had none?"), and "I'm craving".
 
+## Blood nicotine estimate
+
+The app estimates venous blood nicotine in ng/mL, with a likely range, from each
+pouch's strength and time in mouth and your body weight (Profile; 70 kg if not set).
+
+- Release from the pouch follows measured curves: ZYN 6 mg (Lunell 2020) for pouches
+  under 10 mg, Velo 11 mg (Azzopardi 2026) for 10 mg and over.
+- About 95% of released nicotine reaches the blood, spread through 2.6 L/kg, with a
+  2 h half-life (Benowitz, Hukkanen & Jacob 2009). Pouches add up.
+- The range uses slower and faster release, uptake (80-100%) and half-life (1.5-3 h).
+- The level is compared with steady daily levels of nicotine gum users (5-15 ng/mL)
+  and daily smokers (10-50 ng/mL). "Low" is below 5 ng/mL.
+
+The studies measured one pouch at a time, in other brands for 11 mg, so the estimate
+may be off by half or double. It is labelled as an estimate in the app.
+
 ## Provisional calculations
 
-The nicotine estimate, the low line, the Capacity score and the plan's gap and
-first-pouch targets are placeholders until the evidence review is done. They are
-marked PROVISIONAL in `model.js` and labelled as estimates in the app.
+The Capacity score and the plan's gap and first-pouch targets are placeholders until
+the evidence review is done. They are marked PROVISIONAL in `model.js`.
 
 ## Storage
 
@@ -46,7 +61,7 @@ Data is stored in the browser's `localStorage`:
 | Key | Holds |
 | --- | --- |
 | `pouchTracker.entries.v1` | Entries `{ inTs, outTs, mg, productId?, tag? }` |
-| `pouchTracker.settings.v1` | Products, usual product, wake time, plan, check-in confirmations |
+| `pouchTracker.settings.v1` | Products, usual product, wake time, body weight, plan, check-in confirmations, backup dates |
 | `pouchTracker.cravings.v1` | Cravings `{ ts, tag?, outcome? }` |
 
 Times are milliseconds since epoch. `outTs` is `null` while the pouch is in.

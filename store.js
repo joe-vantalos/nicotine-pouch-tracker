@@ -87,6 +87,7 @@ function withDefaults(s, entries) {
     products: Array.isArray(s.products) ? s.products : [],
     usualProductId: s.usualProductId || null,
     wakeTime: /^\d\d:\d\d$/.test(s.wakeTime || '') ? s.wakeTime : '07:00',
+    weightKg: typeof s.weightKg === 'number' && s.weightKg >= 30 && s.weightKg <= 250 ? s.weightKg : null,
     plan: {
       mode: plan.mode === 'strength' ? 'strength' : 'count',
       weeks: [6, 8, 10, 12].includes(plan.weeks) ? plan.weeks : 8,

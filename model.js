@@ -4,8 +4,6 @@
 // (workspace stage D) replaces it.
 
 const MIN = 60000, HOUR = 3600000, DAY = 86400000;
-const HALF_LIFE_MIN = 120;       // Nicotine half-life about 2 h (Benowitz, Hukkanen & Jacob 2009).
-const LOW_FRACTION = 0.15;       // PROVISIONAL: "low" is 15% of your typical daily peak.
 const STEP_MIN = 5;
 
 function dayStart(ts) { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); }
@@ -153,56 +151,96 @@ function onTarget(plan, stats) {
   return plan.mode === 'count' ? stats.count <= t.count : stats.mg <= t.mg;
 }
 
-// ---- Nicotine estimate (PROVISIONAL model) ----
-// One compartment. Each pouch's mg is released evenly while it is in the mouth,
-// and the level falls with a 2 h half-life. Absorbed amount is treated as
-// proportional to mg for every product. Only relative levels are shown.
+// ---- Blood nicotine estimate ----
+// One compartment. Each pouch releases nicotine along a measured release curve
+// while it is in; nearly all released nicotine reaches the blood through the mouth;
+// it spreads through 2.6 L/kg and is cleared with a 2 h half-life. Pouches add up.
+// Evidence and worked example: workspace stage D, output/blood-nicotine-model.md.
 
-function levelSeries(entries, from, to, now) {
-  const k = Math.LN2 / HALF_LIFE_MIN;
-  const warm = from - 12 * HOUR;
+const V_PER_KG = 2.6;            // L/kg, volume of distribution (Benowitz, Hukkanen & Jacob 2009).
+const DEFAULT_WEIGHT_KG = 70;    // Used until a weight is set in Profile.
+const LOW_NGML = 5;              // Below the nicotine gum range of 5-15 ng/mL (Benowitz 2009).
+
+// Share of the pouch's nicotine released by minutes in mouth; held after the last point.
+// slow: ZYN 6 mg (Lunell 2020; 15 min from Knopp 2022, unverified; 30-45 min interpolated).
+// fast: Velo 11 mg (Azzopardi 2026; 45-60 min extrapolated). Used for 10 mg and above.
+const RELEASE = {
+  slow: [[0, 0], [15, 0.17], [30, 0.35], [45, 0.45], [60, 0.57]],
+  fast: [[0, 0], [10, 0.28], [20, 0.36], [30, 0.44], [45, 0.52], [60, 0.58]]
+};
+
+// The central estimate and the two ends of the likely range. F is the share of
+// released nicotine reaching blood, fitted to four measured peaks (0.80 to 1.00).
+// The 6 mg high end is raised so its peak reaches 16 ng/mL: two US ZYN 6 mg studies
+// measured 15-17.5 ng/mL, above this model (blood-nicotine-model.md, conflict 2).
+const BANDS = {
+  mid: { f: 0.95, halfMin: 120, r: { slow: 1, fast: 1 } },
+  low: { f: 0.80, halfMin: 90, r: { slow: 0.7, fast: 0.7 } },
+  high: { f: 1.00, halfMin: 180, r: { slow: 1.55, fast: 1.3 } }
+};
+
+function releaseTable(mg) { return mg >= 10 ? 'fast' : 'slow'; }
+
+function releasedShare(table, min) {
+  const pts = RELEASE[table];
+  if (min <= 0) return 0;
+  for (let i = 1; i < pts.length; i++) {
+    if (min <= pts[i][0]) {
+      const [m0, r0] = pts[i - 1], [m1, r1] = pts[i];
+      return r0 + (r1 - r0) * (min - m0) / (m1 - m0);
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+
+function weightKg(settings) { return settings && settings.weightKg ? settings.weightKg : DEFAULT_WEIGHT_KG; }
+
+// Estimated venous blood nicotine in ng/mL, every STEP_MIN from `from` to `to`.
+function levelSeries(entries, from, to, now, settings, band) {
+  const p = BANDS[band || 'mid'];
+  const k = Math.LN2 / p.halfMin;
+  const litres = V_PER_KG * weightKg(settings);
+  const warm = from - 24 * HOUR;
   const list = entries.filter(e => (e.outTs || now) > warm && e.inTs < to);
   const pts = [];
-  let L = 0;
-  for (let t = warm; t <= to; t += STEP_MIN * MIN) {
+  let mgInBody = 0;
+  // Each point is the level at the end of its STEP_MIN slice.
+  for (let t = warm; t < to; t += STEP_MIN * MIN) {
     const t2 = t + STEP_MIN * MIN;
     let inflow = 0;
     for (const e of list) {
       const out = e.outTs || Math.max(now, e.inTs + MIN);
-      const ov = Math.min(out, t2) - Math.max(e.inTs, t);
-      if (ov > 0) inflow += e.mg * ov / (out - e.inTs);
+      const a = Math.max(e.inTs, t), b = Math.min(out, t2);
+      if (b <= a) continue;
+      const tbl = releaseTable(e.mg), scale = p.r[tbl];
+      const share = m => Math.min(1, releasedShare(tbl, m) * scale);
+      inflow += p.f * e.mg * (share((b - e.inTs) / MIN) - share((a - e.inTs) / MIN));
     }
-    L = L * Math.exp(-k * STEP_MIN) + inflow;
-    if (t >= from) pts.push([t, L]);
+    mgInBody = mgInBody * Math.exp(-k * STEP_MIN) + inflow;
+    if (t2 >= from) pts.push([t2, mgInBody / litres * 1000]);
   }
   return pts;
 }
 
-// "Low" is a fixed fraction of the average daily peak over the last 7 days.
-function lowLevel(entries, now) {
-  const today = dayStart(now), peaks = [];
-  for (let i = 1; i <= 7; i++) {
-    const d = addDays(today, -i);
-    const s = levelSeries(entries, d, addDays(d, 1), now);
-    const p = Math.max(0, ...s.map(x => x[1]));
-    if (p > 0) peaks.push(p);
-  }
-  if (!peaks.length) {
-    const s = levelSeries(entries, today, now, now);
-    peaks.push(Math.max(0, ...s.map(x => x[1])));
-  }
-  return (mean(peaks) || 1) * LOW_FRACTION;
+// Where a level sits against known daily levels (Benowitz 2009): nicotine gum and
+// other replacement products 5-15 ng/mL; daily smokers 10-50 ng/mL.
+function levelBand(ng) {
+  if (ng < LOW_NGML) return { name: 'Low', meaning: 'Below the level nicotine gum gives.' };
+  if (ng < 10) return { name: 'Gum range', meaning: 'About the level nicotine gum or an inhaler gives through the day.' };
+  if (ng < 15) return { name: 'Gum and smoker range', meaning: 'Where the nicotine gum range and a daily smoker\'s range overlap.' };
+  if (ng <= 50) return { name: 'Smoker range', meaning: 'Within the range a daily smoker has through the day.' };
+  return { name: 'Above smoker range', meaning: 'Above the peak most daily smokers reach.' };
 }
 
 function hoursBelow(series, low) {
   return series.filter(p => p[1] < low).length * STEP_MIN / 60;
 }
 
-// Longest continuous stretch below low between 18:00 the day before and noon.
-function overnightLow(entries, day, low, now) {
-  const s = levelSeries(entries, addDays(day, -1) + 18 * HOUR, Math.min(day + 12 * HOUR, now), now);
+// Longest continuous stretch below the low level between 18:00 the day before and noon.
+function overnightLow(entries, settings, day, now) {
+  const s = levelSeries(entries, addDays(day, -1) + 18 * HOUR, Math.min(day + 12 * HOUR, now), now, settings);
   let best = 0, run = 0;
-  s.forEach(p => { run = p[1] < low ? run + STEP_MIN : 0; best = Math.max(best, run); });
+  s.forEach(p => { run = p[1] < LOW_NGML ? run + STEP_MIN : 0; best = Math.max(best, run); });
   return best / 60;
 }
 
@@ -212,17 +250,16 @@ function scoreAt(entries, settings, now, plan) {
   if (!plan) return null;
   const B = plan.B, today = dayStart(now);
   const cur = periodStats(entries, settings, addDays(today, -6), addDays(today, 1), now);
-  const low = lowLevel(entries, now);
   const parts = [];
   if (B.avgGap && cur.avgGap !== null) {
     parts.push({ label: 'Gaps between pouches', value: fmtMin(cur.avgGap) + ' avg',
       score: clamp(50 + (cur.avgGap / B.avgGap - 1) * 100, 0, 100),
       why: 'Average gap over the last 7 days, against ' + fmtMin(B.avgGap) + ' in your baseline week. Longer gaps mean you are going without for longer.' });
   }
-  const night = overnightLow(entries, today, low, now);
+  const night = overnightLow(entries, settings, today, now);
   parts.push({ label: 'Overnight low', value: fmtMin(night * 60),
     score: clamp(night / 12 * 100, 0, 100),
-    why: 'Longest stretch below your low line last night. The time you go without every day.' });
+    why: 'Longest stretch below ' + LOW_NGML + ' ng/mL last night, the level below nicotine gum. The time you go without every day.' });
   if (B.avgFirst !== null && cur.avgFirst !== null) {
     parts.push({ label: 'First pouch after waking', value: fmtMin(cur.avgFirst),
       score: clamp(50 + (cur.avgFirst - B.avgFirst) / 60 * 50, 0, 100),

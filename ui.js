@@ -7,7 +7,7 @@ let settings = null;
 let cravings = [];     // { ts, tag?, outcome? }
 let dataLoaded = false;
 let overlay = null;    // the open sheet or panel, with its form state
-let ui = { range: 'week', scenario: 'none', scoreOpen: 0, phaseOpen: null };
+let ui = { range: 'week', scenario: 'none', scoreOpen: 0, phaseOpen: null, readTs: null };
 let toastTimer = null, cravingTimer = null;
 let statusText = { text: 'loading...', error: false };
 
@@ -178,19 +178,25 @@ function baselineCard(c) {
     '<div class="row" style="margin-top:14px"><button class="btn accent flex" data-act="startPlan">Start my plan</button><a class="btn outline" href="#plan">Options</a></div></div>';
 }
 
+// Estimated level now, at the low or high end of the likely range or in the middle.
+function levelNow(base, now, band) {
+  return levelSeries(base, now - 10 * MIN, now, now, settings, band).at(-1)[1];
+}
+
+function fmtNg(v) { return v < 0.5 ? '0' : String(Math.round(v)); }
+
 function nicotineCard(c) {
   const from = c.today + 6 * HOUR, to = addDays(c.today, 1);
-  const series = levelSeries(projected(c), from, to, c.now);
-  const past = series.filter(p => p[0] <= c.now);
-  const peak = Math.max(0, ...past.map(p => p[1]));
-  const cur = past.length ? past[past.length - 1][1] : 0;
-  const low = lowLevel(entries, c.now);
-  const head = peak > 0 ? Math.round(cur / peak * 100) + '% of today\'s peak' : 'None logged today';
-  const trend = c.active ? 'Rising while the pouch is in.' : cur < low ? 'Below your low line.' : 'Falling. Halves about every 2 hours.';
+  const base = projected(c);
+  const series = levelSeries(base, from, to, c.now, settings);
+  const cur = levelNow(base, c.now, 'mid'), lo = levelNow(base, c.now, 'low'), hi = levelNow(base, c.now, 'high');
+  const band = levelBand(cur);
+  const trend = c.active ? 'Rising while the pouch is in.' : cur < LOW_NGML ? 'Below the nicotine gum range.' : 'Falling. Halves about every 2 hours.';
   return '<a class="card" href="#nicotine"><div class="row"><div class="label">Nicotine in you</div><span class="tag-chip">ESTIMATE</span></div>' +
-    '<div class="num" style="margin-top:6px">' + head + '</div><div class="small">' + trend + '</div>' +
-    '<div style="margin-top:10px">' + curveSvg(series, c.now, { w: 310, h: 70, low }) + '</div>' +
-    '<div class="axis"><span>06</span><span>12</span><span>18</span><span>24</span></div></a>';
+    '<div class="num" style="margin-top:6px">About ' + fmtNg(cur) + ' ng/mL</div>' +
+    '<div class="small">Likely ' + fmtNg(lo) + ' to ' + fmtNg(hi) + ' · ' + band.name + '</div>' +
+    '<div class="small" style="margin-top:2px">' + trend + '</div>' +
+    '<div style="margin-top:10px">' + curveSvg(series, c.now, { w: 310, h: 56, low: LOW_NGML }) + '</div></a>';
 }
 
 function scoreAndPlanCards(c) {
@@ -267,47 +273,110 @@ function viewAftercare(c) {
 
 // ---- Nicotine detail ----
 
+// The series behind the chart on screen, for the reading that follows a tap or drag.
+let chart = null;
+
+function chartTop(v) { return [20, 30, 40, 60, 80, 100, 150].find(t => t >= v * 1.1) || Math.ceil(v / 50) * 50; }
+
+// The level at `ts` on the chart, with its likely range and what the level means.
+function readingHtml(ts) {
+  const i = clamp(Math.round((ts - chart.from) / (STEP_MIN * MIN)), 0, chart.mid.length - 1);
+  const t = chart.mid[i][0], v = chart.mid[i][1], band = levelBand(v);
+  const when = Math.abs(t - chart.now) < STEP_MIN * MIN ? 'Now' : t > chart.now ? fmtTime(t) + ', if you take no more' : fmtTime(t);
+  return '<div class="label">' + esc(when) + '</div>' +
+    '<div class="num" style="margin-top:4px">About ' + fmtNg(v) + ' ng/mL</div>' +
+    '<div class="small">Likely ' + fmtNg(chart.lo[i][1]) + ' to ' + fmtNg(chart.hi[i][1]) + ' · ' + band.name + '</div>' +
+    '<div class="body" style="margin-top:6px;color:var(--soft)">' + esc(band.meaning) + '</div>';
+}
+
+function showReading() {
+  const read = document.getElementById('lvlRead'), mark = document.getElementById('lvlMark');
+  if (!chart || !read || !mark) return;
+  const picked = ui.readTs !== null && ui.readTs >= chart.from && ui.readTs <= chart.to;
+  const ts = picked ? ui.readTs : chart.now;
+  read.innerHTML = readingHtml(ts);
+  mark.style.display = picked ? '' : 'none';
+  mark.style.left = ((ts - chart.from) / (chart.to - chart.from) * 100) + '%';
+}
+
+// y-axis in ng/mL; nicotine gum (5-15) and smoker (10-50) ranges shaded behind;
+// the likely range as a band around the central estimate.
+function levelChart(c, extra) {
+  const W = 300, H = 170, { from, to, mid, lo, hi } = chart;
+  const top = chartTop(Math.max(15, ...hi.map(p => p[1]), ...extra.map(p => p[1])));
+  const x = t => ((t - from) / (to - from) * W).toFixed(1);
+  const y = v => (H - Math.min(v, top) / top * H).toFixed(1);
+  const path = pts => pts.map((p, i) => (i ? 'L' : 'M') + x(p[0]) + ' ' + y(p[1])).join(' ');
+  const rect = (a, b, fill) => '<rect x="0" width="' + W + '" y="' + y(b) + '" height="' + (y(a) - y(b)).toFixed(1) + '" fill="' + fill + '"/>';
+  const step = top <= 20 ? 5 : top <= 60 ? 10 : 25;
+  const ticks = []; for (let v = 0; v <= top; v += step) ticks.push(v);
+  const nx = x(clamp(c.now, from, to));
+  const past = mid.filter(p => p[0] <= c.now), future = mid.filter(p => p[0] >= c.now);
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' +
+    rect(5, 15, 'rgba(94,224,176,0.08)') + rect(10, Math.min(50, top), 'rgba(245,160,74,0.08)');
+  ticks.forEach(v => { s += '<line x1="0" x2="' + W + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="#2A2E33" stroke-width="1" vector-effect="non-scaling-stroke"/>'; });
+  s += '<path d="' + path(hi) + ' ' + path([...lo].reverse()).replace('M', 'L') + ' Z" fill="rgba(94,224,176,0.12)"/>';
+  if (past.length > 1) s += '<path d="' + path(past) + '" fill="none" stroke="#5EE0B0" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>';
+  if (future.length > 1) s += '<path d="' + path(future) + '" fill="none" stroke="#5EE0B0" stroke-width="2" stroke-dasharray="4 4" opacity="0.6" vector-effect="non-scaling-stroke"/>';
+  if (extra.length > 1) s += '<path d="' + path(extra) + '" fill="none" stroke="#F5A04A" stroke-width="2" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>';
+  s += '<line x1="' + nx + '" x2="' + nx + '" y1="0" y2="' + H + '" stroke="#F4F5F6" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>';
+  const pct = v => (100 - Math.min(v, top) / top * 100) + '%';
+  const yLabels = ticks.map(v => '<span style="top:' + pct(v) + '">' + v + '</span>').join('');
+  const bandLabels = '<span class="lvl-band" style="top:' + pct(15) + '">Gum</span>' +
+    (top > 20 ? '<span class="lvl-band warm" style="top:' + pct(Math.min(50, top)) + '">Smoker</span>' : '');
+  const marks = c.todayStats.list.map(e => {
+    const l = (e.inTs - from) / DAY * 100, w = Math.max(((e.outTs || c.now) - e.inTs) / DAY * 100, 1);
+    return '<span style="position:absolute;left:' + l + '%;width:' + w + '%;top:0;height:8px;border-radius:3px;background:' + mgColor(e.mg) + '"></span>';
+  }).join('');
+  return '<div class="lvl-plot"><div class="lvl-y">' + yLabels + '</div>' +
+    '<div class="lvl-area">' + s + bandLabels + '<div class="lvl-mark" id="lvlMark"></div></div></div>' +
+    '<div class="lvl-under"><div style="position:relative;height:8px;margin-top:6px">' + marks + '</div>' +
+    '<div class="axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>' +
+    '<div class="small" style="margin-top:4px">ng/mL, blood in the arm. Tap or drag the chart to read any time.</div></div>';
+}
+
 function viewNicotine(c) {
   const from = c.today, to = addDays(c.today, 1);
   const base = projected(c);
-  const series = levelSeries(base, from, to, c.now);
-  const low = lowLevel(entries, c.now);
+  chart = { from, to: to - STEP_MIN * MIN, now: c.now,
+    mid: levelSeries(base, from, to, c.now, settings),
+    lo: levelSeries(base, from, to, c.now, settings, 'low'),
+    hi: levelSeries(base, from, to, c.now, settings, 'high') };
+  chart.to = chart.mid.at(-1)[0];
+  const series = chart.mid;
   const p = c.usual, dur = c.usualMin * MIN;
   const last = [...entries].reverse().find(e => e.outTs);
   const waitAt = c.plan && last ? Math.max(c.now, last.outTs + c.plan.targets.gap * MIN) : c.now + 2 * HOUR;
   const startAt = c.active ? Math.max(c.now, c.active.inTs + dur) : c.now;
   const extraEntry = { now: { inTs: startAt, outTs: startAt + dur, mg: p.mg }, wait: { inTs: waitAt, outTs: waitAt + dur, mg: p.mg } }[ui.scenario];
-  const extra = extraEntry ? levelSeries(base.concat([extraEntry]), from, to, c.now).filter(x => x[0] >= c.now) : [];
-  const lowAt = s => { const f = s.find(x => x[0] > c.now && x[1] < low && (!extraEntry || x[0] > extraEntry.outTs)); return f ? fmtTime(f[0]) : 'after midnight'; };
+  const extra = extraEntry ? levelSeries(base.concat([extraEntry]), from, to, c.now, settings).filter(x => x[0] >= c.now) : [];
+  const lowAt = s => { const f = s.find(x => x[0] > c.now && x[1] < LOW_NGML && (!extraEntry || x[0] > extraEntry.outTs)); return f ? 'at about ' + fmtTime(f[0]) : 'after midnight'; };
   const text = {
-    none: 'No more today: your estimate falls below the low line at about ' + lowAt(series) + '.',
-    now: 'One more ' + (c.active ? 'straight after this one' : 'now') + ': the level stays up, and drops below low at about ' + lowAt(extra) + '.',
-    wait: 'Waiting until ' + fmtTime(waitAt) + ' lets your level fall first. It drops below low at about ' + lowAt(extra) + '.'
+    none: 'No more today: your estimate falls below ' + LOW_NGML + ' ng/mL, under the nicotine gum range, ' + lowAt(series) + '.',
+    now: 'One more ' + (c.active ? 'straight after this one' : 'now') + ': the level stays up, and drops below ' + LOW_NGML + ' ng/mL ' + lowAt(extra) + '.',
+    wait: 'Waiting until ' + fmtTime(waitAt) + ' lets your level fall first. It drops below ' + LOW_NGML + ' ng/mL ' + lowAt(extra) + '.'
   }[ui.scenario];
   const past = series.filter(x => x[0] <= c.now);
   const peakPt = past.reduce((m, x) => x[1] > m[1] ? x : m, [c.now, 0]);
-  const marks = c.todayStats.list.map(e => {
-    const l = (e.inTs - from) / DAY * 100, w = Math.max(((e.outTs || c.now) - e.inTs) / DAY * 100, 1);
-    return '<span style="position:absolute;left:' + l + '%;width:' + w + '%;top:0;height:8px;border-radius:3px;background:' + mgColor(e.mg) + '"></span>';
-  }).join('');
   const seg = [['none', 'No more'], ['now', 'One now'], ['wait', 'Wait']].map(s => '<button class="' + (ui.scenario === s[0] ? 'on' : '') + '" data-act="scenario" data-s="' + s[0] + '">' + s[1] + '</button>').join('');
   const stat = (l, v, s) => '<div class="card" style="padding:12px 14px"><div class="label">' + l + '</div><div class="num" style="font-size:20px;margin-top:4px">' + v + '</div><div class="small">' + s + '</div></div>';
   const gaps = c.todayStats.gaps;
+  const ts = ui.readTs !== null && ui.readTs >= chart.from && ui.readTs <= chart.to ? ui.readTs : c.now;
+  const weightLine = settings.weightKg ? 'It uses your weight, ' + settings.weightKg + ' kg. ' : 'It uses ' + DEFAULT_WEIGHT_KG + ' kg until you set your weight in Profile. ';
   return header('Nicotine in you', fmtDay(c.now) + ' · estimate', 'now') +
-    '<div class="card">' + curveSvg(series, c.now, { w: 318, h: 150, low, extra }) +
-    '<div style="position:relative;height:8px;margin-top:6px">' + marks + '</div>' +
-    '<div class="axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div></div>' +
+    '<div class="card"><div id="lvlRead">' + readingHtml(ts) + '</div><div style="margin-top:14px">' + levelChart(c, extra) + '</div></div>' +
     '<div class="label" style="margin-top:4px">What if</div><div class="segment" style="grid-template-columns:repeat(3,1fr)">' + seg + '</div>' +
     '<div class="body" style="color:var(--soft)">' + esc(text) + '</div>' +
     '<div class="grid2">' +
-    stat('Peak today', peakPt[1] > 0 ? fmtTime(peakPt[0]) : '–', 'Highest estimate so far') +
-    stat('Below low', fmtMin(hoursBelow(past, low) * 60), 'Today so far') +
-    stat('Overnight', fmtMin(overnightLow(entries, c.today, low, c.now) * 60), 'Below low, last night') +
+    stat('Peak today', peakPt[1] > 0 ? fmtNg(peakPt[1]) + ' ng/mL' : '–', peakPt[1] > 0 ? 'At ' + fmtTime(peakPt[0]) : 'Highest estimate so far') +
+    stat('Below ' + LOW_NGML + ' ng/mL', fmtMin(hoursBelow(past, LOW_NGML) * 60), 'Today so far') +
+    stat('Overnight', fmtMin(overnightLow(entries, settings, c.today, c.now) * 60), 'Below ' + LOW_NGML + ' ng/mL, last night') +
     stat('Longest gap', gaps.length ? fmtMin(Math.max(...gaps)) : '–', c.plan ? 'Target ' + fmtMin(c.plan.targets.gap) : 'Today') +
     '</div><div class="card dashed"><div class="strong" style="font-size:13px">How this is worked out</div><div class="small" style="margin-top:6px">' +
-    'Each pouch\'s nicotine is spread evenly over the time it is in your mouth, and the body clears it with a half-life of about 2 hours (Benowitz, Hukkanen and Jacob, 2009). ' +
-    'All products are treated as releasing nicotine in proportion to their mg. The low line is 15% of your average daily peak over the last week. ' +
-    'Provisional: the absorption model is still being researched. An estimate, not a measurement or medical advice.</div></div>';
+    'Each pouch releases nicotine at the rate measured in studies of similar pouches: ZYN 6 mg (Lunell 2020) and Velo 11 mg (Azzopardi 2026). Pouches of 10 mg and over use the 11 mg rate. ' +
+    'Nearly all released nicotine enters the blood through the mouth. It spreads through about 2.6 litres for each kg of body weight and halves about every 2 hours (Benowitz, Hukkanen and Jacob 2009). ' + weightLine +
+    'The likely range allows for slower or faster release, uptake and clearance. The shaded ranges are the steady daily levels of nicotine gum users (5 to 15 ng/mL) and daily smokers (10 to 50 ng/mL) (Benowitz 2009). ' +
+    'The studies measured one pouch at a time, so your level may differ by half or double. An estimate, not a measurement or medical advice.</div></div>';
 }
 
 // ---- Score ----
@@ -424,8 +493,7 @@ function viewHistory(c) {
   const max = Math.max(1, ...vals, ...tgts.filter(x => x !== null));
   const avg = mgMode ? st.avgMg : st.avgCount, pAvg = mgMode ? prev.avgMg : prev.avgCount;
   const change = pAvg ? Math.round((avg / pAvg - 1) * 100) : null;
-  const low = lowLevel(entries, c.now);
-  const freeHours = mean(st.days.filter(d => d.day < c.today).map(d => hoursBelow(levelSeries(entries, d.day, addDays(d.day, 1), c.now), low)));
+  const freeHours = mean(st.days.filter(d => d.day < c.today).map(d => hoursBelow(levelSeries(entries, d.day, addDays(d.day, 1), c.now, settings), LOW_NGML)));
   const stat = (l, v, s) => '<div class="card" style="padding:12px 14px"><div class="label">' + l + '</div><div class="num" style="font-size:20px;margin-top:4px">' + v + '</div><div class="small">' + s + '</div></div>';
   let days = '';
   [...st.days].reverse().forEach(d => {
@@ -442,7 +510,7 @@ function viewHistory(c) {
     vals.map((v, i) => '<div class="bar" style="height:' + Math.round(v / max * 120) + 'px;background:' + (tgts[i] !== null && v > tgts[i] ? 'var(--warn)' : 'var(--accent)') + '"></div>').join('') + '</div>' +
     '<div class="axis"><span>' + fmtDay(from) + '</span><span>Today</span></div></div>' +
     '<div class="grid2">' + stat('Pouches', st.avgCount.toFixed(1) + ' a day', st.total + ' in total') + stat('Time in', fmtMin(st.avgDuration), 'Average per pouch') +
-    stat('Nicotine-free', fmtMin((freeHours || 0) * 60), 'Below low, per full day') + stat('Spent', pricesKnown(settings) ? fmtMoney(st.avgSpend * n) : '–', pricesKnown(settings) ? 'This ' + ui.range : 'Add prices in Profile') + '</div>' +
+    stat('Nicotine-free', fmtMin((freeHours || 0) * 60), 'Below ' + LOW_NGML + ' ng/mL, per full day') + stat('Spent', pricesKnown(settings) ? fmtMoney(st.avgSpend * n) : '–', pricesKnown(settings) ? 'This ' + ui.range : 'Add prices in Profile') + '</div>' +
     '<div class="label" style="margin-top:4px">Days</div><div class="list">' + days + '</div>';
 }
 
@@ -467,6 +535,8 @@ function viewProfile(c) {
     '<select data-act-change="usual" style="background:#24282D;border:1px solid var(--line);border-radius:12px;height:44px;padding:0 10px;font-weight:700;color-scheme:dark">' +
     settings.products.map(p => '<option value="' + esc(p.id) + '"' + (p.id === settings.usualProductId ? ' selected' : '') + '>' + esc(p.name) + '</option>').join('') + '</select></div>' +
     '<div class="list-row"><div><div style="font-size:14px;font-weight:700">Wake time</div><div class="small">For "first pouch after waking"</div></div><input type="time" value="' + settings.wakeTime + '" data-act-change="wake" style="background:#24282D;border:1px solid var(--line);border-radius:12px;height:44px;padding:0 10px;font-weight:700;color-scheme:dark"></div>' +
+    '<div class="list-row"><div><div style="font-size:14px;font-weight:700">Body weight</div><div class="small">' + (settings.weightKg ? 'For the blood nicotine estimate' : 'Not set. The estimate uses ' + DEFAULT_WEIGHT_KG + ' kg') + '</div></div>' +
+    '<div class="row" style="gap:6px"><input type="number" inputmode="decimal" min="30" max="250" step="0.5" placeholder="' + DEFAULT_WEIGHT_KG + '" value="' + (settings.weightKg || '') + '" data-act-change="weight" aria-label="Body weight in kg" style="width:76px;background:#24282D;border:1px solid var(--line);border-radius:12px;height:44px;padding:0 10px;font-weight:700;color-scheme:dark"><span class="small">kg</span></div></div>' +
     '<div class="list-row"><div><div style="font-size:14px;font-weight:700">Check-ins</div><div class="small">Shown when you open the app after a pouch-free stretch. Phone notifications are not built yet.</div></div><button class="pill' + (settings.checkins ? ' on' : '') + '" data-act="toggleCheckins">' + (settings.checkins ? 'On' : 'Off') + '</button></div></div>' +
     '<div class="label" style="margin-top:6px">Products and tins</div><div class="list">' + products + '</div>' +
     '<button class="btn outline full" data-act="openProduct" data-id="">Add a product</button>' +
@@ -821,6 +891,13 @@ document.addEventListener('change', ev => {
   if (overlay && t.dataset.bind && t.type === 'datetime-local') renderOverlay();
   if (t.dataset.actChange === 'usual') { settings.usualProductId = t.value; persist(); render(); }
   if (t.dataset.actChange === 'wake' && /^\d\d:\d\d$/.test(t.value)) { settings.wakeTime = t.value; persist(); render(); }
+  if (t.dataset.actChange === 'weight') {
+    const kg = Number(t.value);
+    if (t.value === '') settings.weightKg = null;
+    else if (kg >= 30 && kg <= 250) settings.weightKg = Math.round(kg * 2) / 2;
+    else { setStatus('weight must be between 30 and 250 kg', true); render(); return; }
+    persist(); render();
+  }
 });
 
 $importFile.onchange = () => {
@@ -909,6 +986,7 @@ function route() { const r = location.hash.slice(1); return VIEWS[r] ? r : 'now'
 function render() {
   const r = route(), c = context();
   $view.innerHTML = VIEWS[r](c);
+  if (r === 'nicotine') showReading();
   $tabs.querySelectorAll('[data-tab]').forEach(a => a.classList.toggle('on', a.dataset.tab === r));
 }
 
@@ -924,7 +1002,18 @@ function checkPrompts() {
   }
 }
 
-window.addEventListener('hashchange', () => { window.scrollTo(0, 0); render(); });
+window.addEventListener('hashchange', () => { window.scrollTo(0, 0); ui.readTs = null; render(); });
+
+// Tap or drag along the level chart to read the estimate at that time.
+function readAt(ev) {
+  const area = ev.target.closest && ev.target.closest('.lvl-area');
+  if (!area || !chart) return;
+  const r = area.getBoundingClientRect();
+  ui.readTs = chart.from + clamp((ev.clientX - r.left) / r.width, 0, 1) * (chart.to - chart.from);
+  showReading();
+}
+document.addEventListener('pointerdown', readAt);
+document.addEventListener('pointermove', ev => { if (ev.buttons) readAt(ev); });
 
 // Keep other open tabs of the app in sync with changes made here.
 window.addEventListener('storage', e => {
