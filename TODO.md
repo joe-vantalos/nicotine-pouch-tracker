@@ -37,7 +37,10 @@ and helps cut down use.
 ### 5. Log a pouch retrospectively — `todo`
 - Allow adding a past pouch with a chosen in time, out time and strength.
 - Allow editing or deleting an existing entry, for example a forgotten "remove".
+- Design from the coffee app: a "When?" step with Now / Earlier and a wheel picker
+  (`docs/ideas.md`, ideas 1 and 2). Earlier needs both an in time and an out time.
 
 ### 6. Ideas from the coffee app — `needs decision`
-- Next: find out which coffee app it is and list the features worth copying.
-- Record the ideas in `docs/ideas.md`, then add the chosen ones here as items.
+- Reviewed the coffee app design canvas. 12 ideas carry over; they are listed in
+  `docs/ideas.md` with a proposed build order.
+- Next: say yes or no to each idea. Chosen ones become items here.
