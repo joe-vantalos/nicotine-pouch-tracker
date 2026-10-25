@@ -43,4 +43,6 @@ and helps cut down use.
 ### 6. Ideas from the coffee app — `needs decision`
 - Reviewed the coffee app design canvas. 12 ideas carry over; they are listed in
   `docs/ideas.md` with a proposed build order.
-- Next: say yes or no to each idea. Chosen ones become items here.
+- Concept design of the overhauled app (5 screens and 4 logo options):
+  https://claude.ai/artifact/3RRMCgLNiSRJNNqFXuvHzy
+- Next: review the concept, say yes or no to each idea. Chosen ones become items here.
