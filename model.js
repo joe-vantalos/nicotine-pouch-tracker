@@ -237,6 +237,24 @@ function levelBand(ng) {
 // An estimate: no study has measured this for pouches.
 function receptorShare(ng) { return ng / (ng + 0.87); }
 
+// Your usual daytime level: the average estimate between 08:00 and 22:00 over the
+// last 7 days that had a pouch. A reference you know, unlike gum or smoker levels.
+const usualCache = { key: null, value: null };
+function usualLevel(entries, settings, now) {
+  const today = dayStart(now);
+  const key = [today, weightKg(settings), entries.reduce((s, e) => s + e.inTs + (e.outTs || 0) + e.mg, 0)].join('|');
+  if (usualCache.key === key) return usualCache.value;
+  const means = [];
+  for (let i = 1; i <= 7; i++) {
+    const d = addDays(today, -i);
+    if (!entries.some(e => e.inTs >= d && e.inTs < addDays(d, 1))) continue;
+    means.push(mean(levelSeries(entries, d + 8 * HOUR, d + 22 * HOUR, now, settings).map(p => p[1])));
+  }
+  usualCache.key = key;
+  usualCache.value = means.length ? mean(means) : null;
+  return usualCache.value;
+}
+
 // A pouch that went in while another was in, or within an hour of the last coming
 // out. Most of the last one is still in the blood (2 h half-life), so the dose adds.
 function doubledUp(entries, active) {

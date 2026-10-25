@@ -8,14 +8,17 @@
 const LEARN = [
   {
     id: 'level', title: 'What your number means',
-    yours: c => 'Now about ' + fmtNg(levelNow(projected(c), c.now, 'mid')) + ' ng/mL: ' + levelBand(levelNow(projected(c), c.now, 'mid')).name.toLowerCase() + '.',
+    yours: c => {
+      const ng = levelNow(projected(c), c.now, 'mid'), cmp = vsUsual(ng, usualLevel(entries, settings, c.now));
+      return 'Now about ' + fmtNg(ng) + ' ng/mL: ' + cmp.charAt(0).toLowerCase() + cmp.slice(1) + '.';
+    },
     points: [
       'ng/mL is nanograms of nicotine in each millilitre of blood, measured in the arm.',
       'People using nicotine gum or an inhaler sit at about 5 to 15 ng/mL through the day. Daily smokers sit at about 10 to 50.',
       'One cigarette raises the level by about 5 to 30 ng/mL.',
       'One ZYN 6 mg pouch held for 30 minutes measured about 15 to 18 ng/mL in two US studies.',
       'Swedish snus users peaked at about 29 ng/mL over a full day of use.',
-      'These are comparisons, not safe or unsafe lines.'
+      'These are comparisons, not safe or unsafe lines. The app compares you mainly with your own usual daytime level: your average between 08:00 and 22:00 over the last 7 days.'
     ],
     src: 'Benowitz, Hukkanen & Jacob 2009; Keller-Hamilton 2024, 2025; Lunell & Lunell 2005'
   },

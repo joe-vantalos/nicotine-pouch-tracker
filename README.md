@@ -47,8 +47,11 @@ pouch's strength and time in mouth and your body weight (Profile; 70 kg if not s
 - About 95% of released nicotine reaches the blood, spread through 2.6 L/kg, with a
   2 h half-life (Benowitz, Hukkanen & Jacob 2009). Pouches add up.
 - The range uses slower and faster release, uptake (80-100%) and half-life (1.5-3 h).
-- The level is compared with steady daily levels of nicotine gum users (5-15 ng/mL)
-  and daily smokers (10-50 ng/mL). "Low" is below 5 ng/mL.
+- Under the number, the level is compared with your usual daytime level (your average
+  between 08:00 and 22:00 over the last 7 days with a pouch), with what is happening
+  in the body: rising or falling, and the share of nicotine receptors filled.
+- Nicotine gum users (5-15 ng/mL) and daily smokers (10-50 ng/mL) are shown as
+  background ranges on the chart and in Learn. "Low" is below 5 ng/mL.
 
 The studies measured one pouch at a time, in other brands for 11 mg, so the estimate
 may be off by half or double. It is labelled as an estimate in the app.

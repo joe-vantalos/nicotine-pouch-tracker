@@ -191,17 +191,36 @@ function levelNow(base, now, band) {
 
 function fmtNg(v) { return v < 0.5 ? '0' : String(Math.round(v)); }
 
+// A level against your own usual daytime level.
+function vsUsual(ng, usual) {
+  if (ng < 0.5) return 'Close to none';
+  if (!usual) return 'Your usual level shows after a day of logging';
+  const r = ng / usual;
+  if (r > 1.15) return 'About ' + (Math.round(r * 10) / 10) + ' times your usual daytime level';
+  if (r >= 0.85) return 'About your usual daytime level';
+  return 'About ' + Math.max(5, Math.round(r * 20) * 5) + '% of your usual daytime level';
+}
+
+// What the level means in the body right now.
+function inYourBody(ng, rising) {
+  if (ng < 0.5) return 'Close to no nicotine in your blood, and few receptors filled.';
+  const rec = ' About ' + Math.round(receptorShare(ng) * 100) + '% of your main nicotine receptors are filled.';
+  const high = ng > 50 ? ' Above the usual range for daily smokers.' : '';
+  if (rising) return 'Rising while the pouch is in. Heart rate and blood pressure go up within about 5 minutes.' + rec + high;
+  if (ng < LOW_NGML) return 'Low and falling: the time cravings and withdrawal can start.' + rec;
+  return 'Falling, halving about every 2 hours.' + rec + high;
+}
+
 function nicotineCard(c) {
   const from = c.today + 6 * HOUR, to = addDays(c.today, 1);
   const base = projected(c);
   const series = levelSeries(base, from, to, c.now, settings);
   const cur = levelNow(base, c.now, 'mid'), lo = levelNow(base, c.now, 'low'), hi = levelNow(base, c.now, 'high');
-  const band = levelBand(cur);
-  const trend = c.active ? 'Rising while the pouch is in.' : cur < LOW_NGML ? 'Below the nicotine gum range.' : 'Falling. Halves about every 2 hours.';
+  const usual = usualLevel(entries, settings, c.now);
   return '<a class="card" href="#nicotine"><div class="row"><div class="label">Nicotine in you</div><span class="tag-chip">ESTIMATE</span></div>' +
     '<div class="num" style="margin-top:6px">About ' + fmtNg(cur) + ' ng/mL</div>' +
-    '<div class="small">Likely ' + fmtNg(lo) + ' to ' + fmtNg(hi) + ' · ' + band.name + '</div>' +
-    '<div class="small" style="margin-top:2px">' + trend + '</div>' +
+    '<div class="small">' + vsUsual(cur, usual) + (usual && cur >= 0.5 ? ' (' + fmtNg(usual) + ' ng/mL)' : '') + (hi >= 0.5 ? ' · likely ' + fmtNg(lo) + ' to ' + fmtNg(hi) : '') + '</div>' +
+    '<div class="small" style="margin-top:2px">' + inYourBody(cur, !!c.active) + '</div>' +
     '<div style="margin-top:10px">' + curveSvg(series, c.now, { w: 310, h: 56, low: LOW_NGML }) + '</div></a>';
 }
 
@@ -287,12 +306,14 @@ function chartTop(v) { return [20, 30, 40, 60, 80, 100, 150].find(t => t >= v * 
 // The level at `ts` on the chart, with its likely range and what the level means.
 function readingHtml(ts) {
   const i = clamp(Math.round((ts - chart.from) / (STEP_MIN * MIN)), 0, chart.mid.length - 1);
-  const t = chart.mid[i][0], v = chart.mid[i][1], band = levelBand(v);
-  const when = Math.abs(t - chart.now) < STEP_MIN * MIN ? 'Now' : t > chart.now ? fmtTime(t) + ', if you take no more' : fmtTime(t);
+  const t = chart.mid[i][0], v = chart.mid[i][1], isNow = Math.abs(t - chart.now) < STEP_MIN * MIN;
+  // At now, rising means a pouch is in; elsewhere, read it from the curve.
+  const rising = isNow ? chart.pouchIn : i > 0 && v > chart.mid[i - 1][1] + 0.01;
+  const when = isNow ? 'Now' : t > chart.now ? fmtTime(t) + ', if you take no more' : fmtTime(t);
   return '<div class="label">' + esc(when) + '</div>' +
     '<div class="num" style="margin-top:4px">About ' + fmtNg(v) + ' ng/mL</div>' +
-    '<div class="small">Likely ' + fmtNg(chart.lo[i][1]) + ' to ' + fmtNg(chart.hi[i][1]) + ' · ' + band.name + '</div>' +
-    '<div class="body" style="margin-top:6px;color:var(--soft)">' + esc(band.meaning) + '</div>';
+    '<div class="small">' + vsUsual(v, chart.usual) + (chart.usual && v >= 0.5 ? ' (' + fmtNg(chart.usual) + ' ng/mL)' : '') + (chart.hi[i][1] >= 0.5 ? ' · likely ' + fmtNg(chart.lo[i][1]) + ' to ' + fmtNg(chart.hi[i][1]) : '') + '</div>' +
+    '<div class="body" style="margin-top:6px;color:var(--soft)">' + esc(inYourBody(v, rising)) + '</div>';
 }
 
 function showReading() {
@@ -344,7 +365,7 @@ function levelChart(c, extra) {
 function viewNicotine(c) {
   const from = c.today, to = addDays(c.today, 1);
   const base = projected(c);
-  chart = { from, to: to - STEP_MIN * MIN, now: c.now,
+  chart = { from, to: to - STEP_MIN * MIN, now: c.now, pouchIn: !!c.active, usual: usualLevel(entries, settings, c.now),
     mid: levelSeries(base, from, to, c.now, settings),
     lo: levelSeries(base, from, to, c.now, settings, 'low'),
     hi: levelSeries(base, from, to, c.now, settings, 'high') };
